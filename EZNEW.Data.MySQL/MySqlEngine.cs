@@ -149,6 +149,7 @@ namespace EZNEW.Data.MySQL
                     queryParameters = tranResult.Parameters.ObjectToDcitionary();
                 }
             }
+            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
 
             #endregion
 
@@ -168,14 +169,25 @@ namespace EZNEW.Data.MySQL
                 switch (cmd.Operate)
                 {
                     case OperateType.Insert:
-                        cmdText.AppendFormat("INSERT INTO `{0}` ({1}) VALUES ({2})", objectName, string.Join(",", FormatEditFields(fields)), string.Join(",", cmd.Fields.Select(c => "?" + c)));
+                        cmdText.AppendFormat("INSERT INTO `{0}` ({1}) VALUES ({2})"
+                            , objectName
+                            , string.Join(",", FormatEditFields(fields))
+                            , string.Join(",", cmd.Fields.Select(c => "?" + c)));
                         break;
                     case OperateType.Update:
                         IDictionary<string, dynamic> oldCmdParameterDict = null;
                         IDictionary<string, dynamic> newCmdParameterDict = new Dictionary<string, dynamic>();
-                        if (cmd.Parameters is IDictionary<string, dynamic>)
+                        if (cmd.Parameters is IDictionary<string, IModifyValue>)
+                        {
+                            oldCmdParameterDict = (cmd.Parameters as IDictionary<string, IModifyValue>).ToDictionary<KeyValuePair<string, IModifyValue>, string, dynamic>(c => c.Key, c => c.Value);
+                        }
+                        else if (cmd.Parameters is IDictionary<string, dynamic>)
                         {
                             oldCmdParameterDict = cmd.Parameters as IDictionary<string, dynamic>;
+                        }
+                        else if (cmd.Parameters is IDictionary<string, object>)
+                        {
+                            oldCmdParameterDict = cmd.Parameters as IDictionary<string, object>;
                         }
                         else
                         {
@@ -186,7 +198,10 @@ namespace EZNEW.Data.MySQL
                         {
                             if (oldCmdParameterDict == null || !oldCmdParameterDict.ContainsKey(field) || !(oldCmdParameterDict[field] is CalculateModifyValue))
                             {
-                                updateSetArray.Add(string.Format("{0}.`{1}`=?{2}", queryTranslator.ObjectPetName, field.FieldName, field));
+                                updateSetArray.Add(string.Format("{0}.`{1}`=?{2}"
+                                    , queryTranslator.ObjectPetName
+                                    , field.FieldName
+                                    , field));
                                 if (oldCmdParameterDict != null && oldCmdParameterDict.ContainsKey(field))
                                 {
                                     var fieldParameter = oldCmdParameterDict[field];
@@ -203,18 +218,39 @@ namespace EZNEW.Data.MySQL
                                 CalculateModifyValue calModify = oldCmdParameterDict[field] as CalculateModifyValue;
                                 newCmdParameterDict.Add(field, calModify.Value);
                                 string calChar = GetCalculateChar(calModify.Operator);
-                                updateSetArray.Add(string.Format("{0}.`{1}`={0}.`{1}`{2}?{3}", queryTranslator.ObjectPetName, field.FieldName, calChar, field));
+                                updateSetArray.Add(string.Format("{0}.`{1}`={0}.`{1}`{2}?{3}"
+                                    , queryTranslator.ObjectPetName
+                                    , field.FieldName
+                                    , calChar
+                                    , field));
                             }
                         }
                         newParameters = newCmdParameterDict;
-                        cmdText.AppendFormat("{4}UPDATE `{2}` AS {0} SET {1} {3}", queryTranslator.ObjectPetName, string.Join(",", updateSetArray.ToArray()), objectName, conditionString, tranResult.PreScript);
+                        cmdText.AppendFormat("{4}UPDATE `{2}` AS {0}{5} SET {1} {3}"
+                            , queryTranslator.ObjectPetName
+                            , string.Join(",", updateSetArray.ToArray())
+                            , objectName
+                            , conditionString
+                            , tranResult.PreScript
+                            , joinScript);
                         break;
                     case OperateType.Delete:
-                        cmdText.AppendFormat("{3}DELETE {0} FROM `{1}` AS {0} {2}", queryTranslator.ObjectPetName, objectName, conditionString, tranResult.PreScript);
+                        cmdText.AppendFormat("{3}DELETE {0} FROM `{1}` AS {0}{4} {2}"
+                            , queryTranslator.ObjectPetName
+                            , objectName
+                            , conditionString
+                            , tranResult.PreScript
+                            , joinScript);
                         break;
                     case OperateType.Exist:
                         var defaultField = GetDefaultField(cmd.EntityType, fields);
-                        cmdText.AppendFormat("SELECT EXISTS(SELECT {0}.`{1}` FROM `{2}` AS {0} {3})", queryTranslator.ObjectPetName, defaultField.FieldName, objectName, conditionString);
+                        cmdText.AppendFormat("{4}SELECT EXISTS(SELECT {0}.`{1}` FROM `{2}` AS {0}{5} {3})"
+                            , queryTranslator.ObjectPetName
+                            , defaultField.FieldName
+                            , objectName
+                            , conditionString
+                            , tranResult.PreScript
+                            , joinScript);
                         executeCmdResult = ExecuteCommandResult.ExecuteScalar;
                         break;
                     default:
@@ -322,6 +358,7 @@ namespace EZNEW.Data.MySQL
 
             IQueryTranslator queryTranslator = QueryTranslator.GetTranslator(server);
             var tranResult = queryTranslator.Translate(cmd.Query);
+            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
 
             #endregion
 
@@ -336,10 +373,14 @@ namespace EZNEW.Data.MySQL
                 case QueryCommandType.QueryObject:
                 default:
                     int size = cmd.Query == null ? 0 : cmd.Query.QuerySize;
-                    //string fieldSplitChar = string.Format(",{0}.", queryTranslator.ObjectPetName);
                     string objectName = DataManager.GetEntityObjectName(ServerType.MySQL, cmd.EntityType, cmd.ObjectName);
                     var fields = GetFields(cmd.EntityType, cmd.Fields);
-                    cmdText.AppendFormat("{3}SELECT {1} FROM `{2}` AS {0}", queryTranslator.ObjectPetName, string.Join(",", FormatQueryFields(queryTranslator.ObjectPetName, fields)), objectName, tranResult.PreScript);
+                    cmdText.AppendFormat("{3}SELECT {1} FROM `{2}` AS {0}{4}"
+                        , queryTranslator.ObjectPetName
+                        , string.Join(",", FormatQueryFields(queryTranslator.ObjectPetName, fields))
+                        , objectName
+                        , tranResult.PreScript
+                        , joinScript);
                     if (!tranResult.ConditionString.IsNullOrEmpty())
                     {
                         cmdText.AppendFormat(" WHERE {0}", tranResult.ConditionString);
@@ -432,6 +473,7 @@ namespace EZNEW.Data.MySQL
 
             #region execute
 
+            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
             StringBuilder cmdText = new StringBuilder();
             switch (cmd.Query.QueryType)
             {
@@ -440,7 +482,6 @@ namespace EZNEW.Data.MySQL
                     break;
                 case QueryCommandType.QueryObject:
                 default:
-                    //string fieldSplitChar = string.Format(",{0}.", queryTranslator.ObjectPetName);
                     string conditionString = string.Empty;
                     string orderString = string.Empty;
                     string limitString = string.Empty;
@@ -456,7 +497,16 @@ namespace EZNEW.Data.MySQL
                         orderString = string.Format(" ORDER BY {0}", tranResult.OrderString);
                     }
                     limitString = string.Format(" LIMIT {0},{1}", offsetNum, size);
-                    cmdText.AppendFormat("{7}SELECT (SELECT COUNT({3}.`{0}`) FROM `{2}` AS {3} {4}) AS PagingTotalCount,{1} FROM `{2}` AS {3} {4} {5} {6}", defaultField.FieldName, string.Join(",", FormatQueryFields(queryTranslator.ObjectPetName, fields)), objectName, queryTranslator.ObjectPetName, conditionString, orderString, limitString, tranResult.PreScript);
+                    cmdText.AppendFormat("{7}SELECT (SELECT COUNT({3}.`{0}`) FROM `{2}` AS {3}{8} {4}) AS PagingTotalCount,{1} FROM `{2}` AS {3}{8} {4} {5} {6}"
+                        , defaultField.FieldName
+                        , string.Join(",", FormatQueryFields(queryTranslator.ObjectPetName, fields))
+                        , objectName
+                        , queryTranslator.ObjectPetName
+                        , conditionString
+                        , orderString
+                        , limitString
+                        , tranResult.PreScript
+                        , joinScript);
                     break;
             }
 
@@ -562,6 +612,7 @@ namespace EZNEW.Data.MySQL
             #region query
 
             StringBuilder cmdText = new StringBuilder();
+            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
             switch (cmd.Query.QueryType)
             {
                 case QueryCommandType.Text:
@@ -575,8 +626,15 @@ namespace EZNEW.Data.MySQL
                         return default(T);
                     }
                     string objectName = DataManager.GetEntityObjectName(ServerType.MySQL, cmd.EntityType, cmd.ObjectName);
-                    var fields = DataManager.GetFields(ServerType.SQLServer, cmd.EntityType, cmd.Fields);
-                    cmdText.AppendFormat("{4}SELECT {0}({3}.`{1}`) FROM `{2}` AS {3}", funcName, fields[0].FieldName, objectName, queryTranslator.ObjectPetName, tranResult.PreScript);
+                    var fields = DataManager.GetFields(ServerType.MySQL, cmd.EntityType, cmd.Fields);
+                    cmdText.AppendFormat("{4}SELECT {0}({3}.`{1}`) FROM `{2}` AS {3}{5}"
+                        , funcName
+                        , fields[0].FieldName
+                        , objectName
+                        , queryTranslator.ObjectPetName
+                        , tranResult.PreScript
+                        , joinScript
+                        );
                     if (!tranResult.ConditionString.IsNullOrEmpty())
                     {
                         cmdText.AppendFormat(" WHERE {0}", tranResult.ConditionString);
@@ -702,7 +760,7 @@ namespace EZNEW.Data.MySQL
                 return new List<string>(0);
             }
             List<string> formatFields = new List<string>();
-            string key = ((int)ServerType.SQLServer).ToString();
+            string key = ((int)ServerType.MySQL).ToString();
             foreach (var field in fields)
             {
                 var formatValue = field.GetEditFormat(key);
@@ -728,7 +786,7 @@ namespace EZNEW.Data.MySQL
                 return new List<string>(0);
             }
             List<string> formatFields = new List<string>();
-            string key = ((int)ServerType.SQLServer).ToString();
+            string key = ((int)ServerType.MySQL).ToString();
             foreach (var field in fields)
             {
                 var formatValue = field.GetQueryFormat(key);
@@ -762,7 +820,7 @@ namespace EZNEW.Data.MySQL
         /// <returns></returns>
         List<EntityField> GetFields(Type entityType, IEnumerable<string> propertyNames)
         {
-            return DataManager.GetFields(ServerType.SQLServer, entityType, propertyNames);
+            return DataManager.GetFields(ServerType.MySQL, entityType, propertyNames);
         }
 
         /// <summary>
