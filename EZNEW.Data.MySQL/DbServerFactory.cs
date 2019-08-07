@@ -1,4 +1,5 @@
-﻿using MySql.Data.MySqlClient;
+﻿using EZNEW.Data.Config;
+using MySql.Data.MySqlClient;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -14,13 +15,13 @@ namespace EZNEW.Data.MySQL
         #region get db connection
 
         /// <summary>
-        /// get sql server database connection
+        /// get mysql database connection
         /// </summary>
         /// <param name="server">database server</param>
         /// <returns>db connection</returns>
         public static IDbConnection GetConnection(ServerInfo server)
         {
-            IDbConnection conn = conn = new MySqlConnection(server.ConnectionString);
+            IDbConnection conn = DataManager.GetDBConnection?.Invoke(server) ?? new MySqlConnection(server.ConnectionString);
             return conn;
         }
 

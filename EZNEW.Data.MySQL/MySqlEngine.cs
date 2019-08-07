@@ -21,6 +21,8 @@ namespace EZNEW.Data.MySQL
     /// </summary>
     public class MySqlEngine : IDbEngine
     {
+        static string fieldFormatKey = ((int)ServerType.MySQL).ToString();
+
         #region execute
 
         /// <summary>
@@ -420,7 +422,10 @@ namespace EZNEW.Data.MySQL
         /// <returns>data list</returns>
         public async Task<IEnumerable<T>> QueryAsync<T>(ServerInfo server, ICommand cmd)
         {
-            cmd.Query = cmd.Query ?? QueryFactory.Create();
+            if (cmd.Query == null)
+            {
+                throw new EZNEWException("ICommand.Query is null");
+            }
 
             #region query object translate
 
@@ -440,7 +445,7 @@ namespace EZNEW.Data.MySQL
                     break;
                 case QueryCommandType.QueryObject:
                 default:
-                    int size = cmd.Query == null ? 0 : cmd.Query.QuerySize;
+                    int size = cmd.Query.QuerySize;
                     string objectName = DataManager.GetEntityObjectName(ServerType.MySQL, cmd.EntityType, cmd.ObjectName);
                     cmdText.AppendFormat("{3}SELECT {1} FROM `{2}` AS {0}{4}"
                         , translator.ObjectPetName
@@ -528,7 +533,10 @@ namespace EZNEW.Data.MySQL
         /// <returns></returns>
         public async Task<IEnumerable<T>> QueryOffsetAsync<T>(ServerInfo server, ICommand cmd, int offsetNum = 0, int size = int.MaxValue)
         {
-            cmd.Query = cmd.Query ?? QueryFactory.Create();
+            if (cmd.Query == null)
+            {
+                throw new EZNEWException("ICommand.Query is null");
+            }
 
             #region query object translate
 
@@ -668,7 +676,7 @@ namespace EZNEW.Data.MySQL
                 case OperateType.Query:
                     if (cmd.Query == null)
                     {
-                        cmd.Query = QueryFactory.Create();
+                        throw new EZNEWException("ICommand.Query is null");
                     }
                     cmd.Query.QuerySize = 1;
                     IEnumerable<T> dataList = await QueryAsync<T>(server, cmd).ConfigureAwait(false);
@@ -692,7 +700,10 @@ namespace EZNEW.Data.MySQL
         /// <returns></returns>
         async Task<T> AggregateFunctionAsync<T>(ServerInfo server, ICommand cmd)
         {
-            cmd.Query = cmd.Query ?? QueryFactory.Create();
+            if (cmd.Query == null)
+            {
+                throw new EZNEWException("ICommand.Query is null");
+            }
 
             #region query object translate
 
@@ -713,19 +724,36 @@ namespace EZNEW.Data.MySQL
                 case QueryCommandType.QueryObject:
                 default:
                     string funcName = GetAggregateFunctionName(cmd.Operate);
-                    if (funcName.IsNullOrEmpty() || cmd.Fields.IsNullOrEmpty())
+                    if (funcName.IsNullOrEmpty())
                     {
                         return default(T);
                     }
-                    string objectName = DataManager.GetEntityObjectName(ServerType.MySQL, cmd.EntityType, cmd.ObjectName);
-                    if (cmd.Query.QueryFields.IsNullOrEmpty())
+
+                    #region field
+
+                    EntityField field = null;
+                    if (AggregateOperateMustNeedField(cmd.Operate))
                     {
-                        throw new EZNEWException("must set one field");
+                        if (cmd.Query.QueryFields.IsNullOrEmpty())
+                        {
+                            throw new EZNEWException(string.Format("You must specify the field to perform for the {0} operation", funcName));
+                        }
+                        else
+                        {
+                            field = DataManager.GetField(ServerType.MySQL, cmd.EntityType, cmd.Query.QueryFields[0]);
+                        }
                     }
-                    var field = DataManager.GetField(ServerType.MySQL, cmd.EntityType, cmd.Query.QueryFields[0]);
-                    cmdText.AppendFormat("{4}SELECT {0}({3}.`{1}`) FROM `{2}` AS {3}{5}"
+                    else
+                    {
+                        field = DataManager.GetDefaultField(ServerType.MySQL, cmd.EntityType);
+                    }
+
+                    #endregion
+
+                    string objectName = DataManager.GetEntityObjectName(ServerType.MySQL, cmd.EntityType, cmd.ObjectName);
+                    cmdText.AppendFormat("{4}SELECT {0}({1}) FROM `{2}` AS {3}{5}"
                         , funcName
-                        , field.FieldName
+                        , FormatField(translator.ObjectPetName, field)
                         , objectName
                         , translator.ObjectPetName
                         , tranResult.PreScript
@@ -752,7 +780,7 @@ namespace EZNEW.Data.MySQL
 
         #endregion
 
-        #region Helpers
+        #region helpers
 
         /// <summary>
         /// get command type
@@ -820,6 +848,16 @@ namespace EZNEW.Data.MySQL
         }
 
         /// <summary>
+        /// Aggregate Operate Must Need Field
+        /// </summary>
+        /// <param name="operateType"></param>
+        /// <returns></returns>
+        bool AggregateOperateMustNeedField(OperateType operateType)
+        {
+            return operateType != OperateType.Count;
+        }
+
+        /// <summary>
         /// format insert fields
         /// </summary>
         /// <param name="fields">fields</param>
@@ -879,27 +917,43 @@ namespace EZNEW.Data.MySQL
             string key = ((int)ServerType.MySQL).ToString();
             foreach (var field in queryFields)
             {
-                var formatValue = field.GetQueryFormat(key);
-                if (formatValue.IsNullOrEmpty())
-                {
-                    string fieldName = string.Format("{0}.`{1}`", dbObjectName, field.FieldName);
-                    if (!field.QueryFormat.IsNullOrEmpty())
-                    {
-                        formatValue = string.Format(field.QueryFormat + " AS `{1}`", fieldName, field.PropertyName);
-                    }
-                    else if (field.FieldName != field.PropertyName)
-                    {
-                        formatValue = string.Format("{0} AS `{1}`", fieldName, field.PropertyName);
-                    }
-                    else
-                    {
-                        formatValue = fieldName;
-                    }
-                    field.SetQueryFormat(key, formatValue);
-                }
+                var formatValue = FormatField(dbObjectName, field);
                 formatFields.Add(formatValue);
             }
             return formatFields;
+        }
+
+        /// <summary>
+        /// format field
+        /// </summary>
+        /// <param name="dbObjectName">db object name</param>
+        /// <param name="field">field</param>
+        /// <returns></returns>
+        string FormatField(string dbObjectName, EntityField field)
+        {
+            if (field == null)
+            {
+                return string.Empty;
+            }
+            var formatValue = field.GetQueryFormat(fieldFormatKey);
+            if (formatValue.IsNullOrEmpty())
+            {
+                string fieldName = string.Format("{0}.`{1}`", dbObjectName, field.FieldName);
+                if (!field.QueryFormat.IsNullOrEmpty())
+                {
+                    formatValue = string.Format(field.QueryFormat + " AS `{1}`", fieldName, field.PropertyName);
+                }
+                else if (field.FieldName != field.PropertyName)
+                {
+                    formatValue = string.Format("{0} AS `{1}`", fieldName, field.PropertyName);
+                }
+                else
+                {
+                    formatValue = fieldName;
+                }
+                field.SetQueryFormat(fieldFormatKey, formatValue);
+            }
+            return formatValue;
         }
 
         /// <summary>
