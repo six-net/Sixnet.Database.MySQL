@@ -13,6 +13,7 @@ using System.Text;
 using System.Threading.Tasks;
 using EZNEW.Develop.Command.Modify;
 using EZNEW.Framework.Fault;
+using EZNEW.Develop.DataAccess;
 
 namespace EZNEW.Data.MySQL
 {
@@ -30,11 +31,12 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <typeparam name="T">data type</typeparam>
         /// <param name="server">server</param>
+        /// <param name="executeOption">execute option</param>
         /// <param name="cmds">command</param>
         /// <returns>data numbers</returns>
-        public int Execute(ServerInfo server, params ICommand[] cmds)
+        public int Execute(ServerInfo server, CommandExecuteOption executeOption, params ICommand[] cmds)
         {
-            return ExecuteAsync(server, cmds).Result;
+            return ExecuteAsync(server, executeOption, cmds).Result;
         }
 
         /// <summary>
@@ -42,9 +44,10 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <typeparam name="T">data type</typeparam>
         /// <param name="server">server</param>
+        /// <param name="executeOption">execute option</param>
         /// <param name="cmds">command</param>
         /// <returns>data numbers</returns>
-        public async Task<int> ExecuteAsync(ServerInfo server, params ICommand[] cmds)
+        public async Task<int> ExecuteAsync(ServerInfo server, CommandExecuteOption executeOption, params ICommand[] cmds)
         {
             #region group execute commands
 
@@ -117,7 +120,7 @@ namespace EZNEW.Data.MySQL
 
             #endregion
 
-            return await ExecuteCommandAsync(server, executeCommands, cmds.Length > 1).ConfigureAwait(false);
+            return await ExecuteCommandAsync(server, executeOption, executeCommands, executeOption?.ExecuteByTransaction ?? cmds.Length > 1).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -127,17 +130,16 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeCommands">execute commands</param>
         /// <param name="useTransaction">use transaction</param>
         /// <returns></returns>
-        async Task<int> ExecuteCommandAsync(ServerInfo server, IEnumerable<DbExecuteCommand> executeCommands, bool useTransaction)
+        async Task<int> ExecuteCommandAsync(ServerInfo server, CommandExecuteOption executeOption, IEnumerable<DbExecuteCommand> executeCommands, bool useTransaction)
         {
             int resultValue = 0;
             bool success = true;
             using (var conn = DbServerFactory.GetConnection(server))
             {
-                conn.Open();
                 IDbTransaction transaction = null;
                 if (useTransaction)
                 {
-                    transaction = conn.BeginTransaction();
+                    transaction = GetExecuteTransaction(conn, executeOption);
                 }
                 try
                 {
@@ -477,7 +479,8 @@ namespace EZNEW.Data.MySQL
 
             using (var conn = DbServerFactory.GetConnection(server))
             {
-                return await conn.QueryAsync<T>(cmdText.ToString(), tranResult.Parameters, commandType: GetCommandType(cmd as RdbCommand)).ConfigureAwait(false);
+                var tran = GetQueryTransaction(conn, cmd.Query);
+                return await conn.QueryAsync<T>(cmdText.ToString(), tranResult.Parameters, transaction: tran, commandType: GetCommandType(cmd as RdbCommand)).ConfigureAwait(false);
             }
         }
 
@@ -576,7 +579,7 @@ namespace EZNEW.Data.MySQL
                         orderString = string.Format(" ORDER BY {0}", tranResult.OrderString);
                     }
                     limitString = string.Format(" LIMIT {0},{1}", offsetNum, size);
-                    cmdText.AppendFormat("{7}SELECT (SELECT COUNT({3}.`{0}`) FROM `{2}` AS {3}{8} {4}) AS PagingTotalCount,{1} FROM `{2}` AS {3}{8} {4} {5} {6}"
+                    cmdText.AppendFormat("{7}SELECT (SELECT COUNT({3}.`{0}`) FROM `{2}` AS {3}{8} {4}) AS QueryDataTotalCount,{1} FROM `{2}` AS {3}{8} {4} {5} {6}"
                         , defaultFieldName
                         , string.Join(",", formatQueryFields)
                         , objectName
@@ -593,7 +596,8 @@ namespace EZNEW.Data.MySQL
 
             using (var conn = DbServerFactory.GetConnection(server))
             {
-                return await conn.QueryAsync<T>(cmdText.ToString(), tranResult.Parameters, commandType: GetCommandType(cmd as RdbCommand)).ConfigureAwait(false);
+                var tran = GetQueryTransaction(conn, cmd.Query);
+                return await conn.QueryAsync<T>(cmdText.ToString(), tranResult.Parameters, transaction: tran, commandType: GetCommandType(cmd as RdbCommand)).ConfigureAwait(false);
             }
         }
 
@@ -642,7 +646,8 @@ namespace EZNEW.Data.MySQL
                                 , preScript);
             using (var conn = DbServerFactory.GetConnection(server))
             {
-                int value = await conn.ExecuteScalarAsync<int>(cmdText, tranResult.Parameters).ConfigureAwait(false);
+                var tran = GetQueryTransaction(conn, cmd.Query);
+                int value = await conn.ExecuteScalarAsync<int>(cmdText, tranResult.Parameters, transaction: tran).ConfigureAwait(false);
                 return value > 0;
             }
         }
@@ -654,9 +659,9 @@ namespace EZNEW.Data.MySQL
         /// <param name="server">database server</param>
         /// <param name="cmd">command</param>
         /// <returns>query data</returns>
-        public T QuerySingle<T>(ServerInfo server, ICommand cmd)
+        public T AggregateValue<T>(ServerInfo server, ICommand cmd)
         {
-            return QuerySingleAsync<T>(server, cmd).Result;
+            return AggregateValueAsync<T>(server, cmd).Result;
         }
 
         /// <summary>
@@ -666,44 +671,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="server">database server</param>
         /// <param name="cmd">command</param>
         /// <returns>query data</returns>
-        public async Task<T> QuerySingleAsync<T>(ServerInfo server, ICommand cmd)
-        {
-            T result = default(T);
-            switch (cmd.Operate)
-            {
-                case OperateType.Max:
-                case OperateType.Min:
-                case OperateType.Sum:
-                case OperateType.Avg:
-                case OperateType.Count:
-                    result = await AggregateFunctionAsync<T>(server, cmd).ConfigureAwait(false);
-                    break;
-                case OperateType.Query:
-                    if (cmd.Query == null)
-                    {
-                        throw new EZNEWException("ICommand.Query is null");
-                    }
-                    cmd.Query.QuerySize = 1;
-                    IEnumerable<T> dataList = await QueryAsync<T>(server, cmd).ConfigureAwait(false);
-                    if (dataList != null && dataList.Any())
-                    {
-                        result = dataList.ElementAt(0);
-                    }
-                    break;
-                default:
-                    break;
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// Aggregate Function
-        /// </summary>
-        /// <typeparam name="T">data type</typeparam>
-        /// <param name="server">database server</param>
-        /// <param name="cmd">command</param>
-        /// <returns></returns>
-        async Task<T> AggregateFunctionAsync<T>(ServerInfo server, ICommand cmd)
+        public async Task<T> AggregateValueAsync<T>(ServerInfo server, ICommand cmd)
         {
             if (cmd.Query == null)
             {
@@ -779,13 +747,40 @@ namespace EZNEW.Data.MySQL
 
             using (var conn = DbServerFactory.GetConnection(server))
             {
-                return await conn.ExecuteScalarAsync<T>(cmdText.ToString(), tranResult.Parameters, commandType: GetCommandType(cmd as RdbCommand)).ConfigureAwait(false);
+                var tran = GetQueryTransaction(conn, cmd.Query);
+                return await conn.ExecuteScalarAsync<T>(cmdText.ToString(), tranResult.Parameters, transaction: tran, commandType: GetCommandType(cmd as RdbCommand)).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// query data
+        /// </summary>
+        /// <param name="server">database server</param>
+        /// <param name="cmd">query cmd</param>
+        /// <returns>data</returns>
+        public async Task<DataSet> QueryMultipleAsync(ServerInfo server, ICommand cmd)
+        {
+            using (var conn = DbServerFactory.GetConnection(server))
+            {
+                var tran = GetQueryTransaction(conn, cmd.Query);
+                DynamicParameters parameters = ConvertCmdParameters(ParseParameters(cmd.Parameters));
+                using (var reader = await conn.ExecuteReaderAsync(cmd.CommandText, parameters, transaction: tran, commandType: GetCommandType(cmd as RdbCommand)).ConfigureAwait(false))
+                {
+                    DataSet dataSet = new DataSet();
+                    while (!reader.IsClosed && reader.Read())
+                    {
+                        DataTable dataTable = new DataTable();
+                        dataTable.Load(reader);
+                        dataSet.Tables.Add(dataTable);
+                    }
+                    return dataSet;
+                }
             }
         }
 
         #endregion
 
-        #region helpers
+        #region util
 
         /// <summary>
         /// get command type
@@ -794,7 +789,7 @@ namespace EZNEW.Data.MySQL
         /// <returns></returns>
         CommandType GetCommandType(RdbCommand cmd)
         {
-            return cmd.CommandType == RdbCommandTextType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
+            return cmd.CommandType == CommandTextType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
         }
 
         /// <summary>
@@ -810,13 +805,13 @@ namespace EZNEW.Data.MySQL
                 case CalculateOperator.Add:
                     opearterChar = "+";
                     break;
-                case CalculateOperator.subtract:
+                case CalculateOperator.Subtract:
                     opearterChar = "-";
                     break;
-                case CalculateOperator.multiply:
+                case CalculateOperator.Multiply:
                     opearterChar = "*";
                     break;
-                case CalculateOperator.divide:
+                case CalculateOperator.Divide:
                     opearterChar = "/";
                     break;
             }
@@ -1049,6 +1044,66 @@ namespace EZNEW.Data.MySQL
                                     , parameter.Scale);
             }
             return dynamicParameters;
+        }
+
+        /// <summary>
+        /// get transaction isolation level
+        /// </summary>
+        /// <param name="dataIsolationLevel">data isolation level</param>
+        /// <returns></returns>
+        IsolationLevel? GetTransactionIsolationLevel(DataIsolationLevel? dataIsolationLevel)
+        {
+            if (!dataIsolationLevel.HasValue)
+            {
+                dataIsolationLevel = DataManager.GetServerDataIsolationLevel(ServerType.MySQL);
+            }
+            return DataManager.GetSystemIsolationLevel(dataIsolationLevel);
+        }
+
+        /// <summary>
+        /// get query transaction
+        /// </summary>
+        /// <param name="connection">connection</param>
+        /// <param name="query">query</param>
+        /// <returns></returns>
+        IDbTransaction GetQueryTransaction(IDbConnection connection, IQuery query)
+        {
+            DataIsolationLevel? dataIsolationLevel = query?.IsolationLevel;
+            if (!dataIsolationLevel.HasValue)
+            {
+                dataIsolationLevel = DataManager.GetServerDataIsolationLevel(ServerType.MySQL);
+            }
+            var systemIsolationLevel = GetTransactionIsolationLevel(query.IsolationLevel);
+            if (systemIsolationLevel.HasValue)
+            {
+                if (connection.State != ConnectionState.Open)
+                {
+                    connection.Open();
+                }
+                return connection.BeginTransaction(systemIsolationLevel.Value);
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// get execute transaction
+        /// </summary>
+        /// <param name="connection">connection</param>
+        /// <param name="executeOption">execute option</param>
+        /// <returns></returns>
+        IDbTransaction GetExecuteTransaction(IDbConnection connection, CommandExecuteOption executeOption)
+        {
+            DataIsolationLevel? dataIsolationLevel = executeOption?.IsolationLevel;
+            if (!dataIsolationLevel.HasValue)
+            {
+                dataIsolationLevel = DataManager.GetServerDataIsolationLevel(ServerType.MySQL);
+            }
+            var systemIsolationLevel = DataManager.GetSystemIsolationLevel(dataIsolationLevel);
+            if (connection.State != ConnectionState.Open)
+            {
+                connection.Open();
+            }
+            return systemIsolationLevel.HasValue ? connection.BeginTransaction(systemIsolationLevel.Value) : connection.BeginTransaction();
         }
 
         #endregion
