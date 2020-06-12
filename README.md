@@ -1,6 +1,6 @@
 # EZNEW.Data.MySQL
 
-EZNEW.Data.MySQL is an implementation based on EZNEW.Data for MySQL database access
+Provides access to MySQL databases based on the EZNEW development framework
 
 # Reporting issues and bugs
 
