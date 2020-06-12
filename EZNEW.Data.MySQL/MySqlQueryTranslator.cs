@@ -1,23 +1,22 @@
-﻿using EZNEW.Develop.Command;
-using EZNEW.Develop.CQuery;
-using EZNEW.Develop.CQuery.CriteriaConvert;
-using EZNEW.Develop.CQuery.Translator;
-using EZNEW.Develop.Entity;
-using EZNEW.Framework.Extension;
-using EZNEW.Framework.Fault;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using EZNEW.Develop.Command;
+using EZNEW.Develop.CQuery;
+using EZNEW.Develop.CQuery.CriteriaConverter;
+using EZNEW.Develop.CQuery.Translator;
+using EZNEW.Develop.Entity;
+using EZNEW.Fault;
 
 namespace EZNEW.Data.MySQL
 {
     /// <summary>
-    /// Query Translator Implement For mysql DataBase
+    /// Query translator implement for mysql DataBase
     /// </summary>
     public class MySqlQueryTranslator : IQueryTranslator
     {
-        #region fields
+        #region Fields
 
         const string EqualOperator = "=";
         const string GreaterThanOperator = ">";
@@ -50,10 +49,10 @@ namespace EZNEW.Data.MySQL
 
         #endregion
 
-        #region propertys
+        #region Properties
 
         /// <summary>
-        /// Query Object Pet Name
+        /// Gets or sets the query object pet name
         /// </summary>
         public string ObjectPetName
         {
@@ -64,13 +63,13 @@ namespace EZNEW.Data.MySQL
         }
 
         /// <summary>
-        /// parameter sequence
+        /// Gets or sets the parameter sequence
         /// </summary>
         public int ParameterSequence { get; set; } = 0;
 
         #endregion
 
-        #region functions
+        #region Functions
 
         /// <summary>
         /// Translate Query Object
@@ -95,7 +94,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="paras">parameters</param>
         /// <param name="objectName">query object name</param>
         /// <returns></returns>
-        public TranslateResult ExecuteTranslate(IQuery query, CmdParameters paras = null, string objectName = "", bool subQuery = false)
+        public TranslateResult ExecuteTranslate(IQuery query, CommandParameters paras = null, string objectName = "", bool subQuery = false, bool useOrder = true)
         {
             if (query == null)
             {
@@ -105,7 +104,7 @@ namespace EZNEW.Data.MySQL
             if (query.QueryType == QueryCommandType.QueryObject)
             {
                 StringBuilder orderBuilder = new StringBuilder();
-                CmdParameters parameters = paras ?? new CmdParameters();
+                CommandParameters parameters = paras ?? new CommandParameters();
                 objectName = string.IsNullOrWhiteSpace(objectName) ? ObjPetName : objectName;
                 List<string> withScripts = new List<string>();
                 string recurveTableName = string.Empty;
@@ -113,7 +112,7 @@ namespace EZNEW.Data.MySQL
 
                 #region query condition
 
-                if (query.Criterias != null && query.Criterias.Count > 0)
+                if (!query.Criterias.IsNullOrEmpty())
                 {
                     int index = 0;
                     foreach (var queryItem in query.Criterias)
@@ -134,7 +133,7 @@ namespace EZNEW.Data.MySQL
 
                 #region sort
 
-                if (!subQuery && query.Orders != null && query.Orders.Count > 0)
+                if (useOrder && !query.Orders.IsNullOrEmpty())
                 {
                     foreach (var orderItem in query.Orders)
                     {
@@ -161,15 +160,19 @@ namespace EZNEW.Data.MySQL
                             throw new EZNEWException("IQuery object must set entity type if use in join operation");
                         }
                         string joinObjName = GetNewSubObjectPetName();
-                        var joinQueryResult = ExecuteTranslate(joinItem.JoinQuery, parameters, joinObjName, true);
-                        if (!joinQueryResult.ConditionString.IsNullOrEmpty())
+                        var joinQueryResult = ExecuteTranslate(joinItem.JoinQuery, parameters, joinObjName, true, true);
+                        if (!string.IsNullOrWhiteSpace(joinQueryResult.ConditionString))
                         {
                             conditionBuilder.Append($"{(conditionBuilder.Length == 0 ? string.Empty : " AND")}{joinQueryResult.ConditionString}");
                         }
-                        joinBuilder.Append($"{GetJoinOperator(joinItem.JoinType)} `{DataManager.GetQueryRelationObjectName(ServerType.MySQL, joinItem.JoinQuery)}` AS {joinObjName}{GetJoinCondition(query, joinItem, objectName, joinObjName)}");
-                        if (!joinQueryResult.JoinScript.IsNullOrEmpty())
+                        joinBuilder.Append($"{GetJoinOperator(joinItem.JoinType)} `{DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, joinItem.JoinQuery)}` AS {joinObjName}{GetJoinCondition(query, joinItem, objectName, joinObjName)}");
+                        if (!string.IsNullOrWhiteSpace(joinQueryResult.JoinScript))
                         {
                             joinBuilder.Append($" {joinQueryResult.JoinScript}");
+                        }
+                        if (!string.IsNullOrWhiteSpace(joinQueryResult.OrderString))
+                        {
+                            orderBuilder.Append(joinQueryResult.OrderString);
                         }
                         if (!joinQueryResult.WithScripts.IsNullOrEmpty())
                         {
@@ -190,13 +193,13 @@ namespace EZNEW.Data.MySQL
                 {
                     allowJoin = false;
                     string nowConditionString = conditionString;
-                    EntityField recurveField = DataManager.GetField(ServerType.MySQL, query, query.RecurveCriteria.Key);
-                    EntityField recurveRelationField = DataManager.GetField(ServerType.MySQL, query, query.RecurveCriteria.RelationKey);
+                    EntityField recurveField = DataManager.GetField(DatabaseServerType.MySQL, query, query.RecurveCriteria.Key);
+                    EntityField recurveRelationField = DataManager.GetField(DatabaseServerType.MySQL, query, query.RecurveCriteria.RelationKey);
                     var recurveTable = GetNewRecurveTableName();
                     recurveTablePetName = recurveTable.Item1;
                     recurveTableName = recurveTable.Item2;
                     conditionString = $"{objectName}.`{recurveField.FieldName}` IN (SELECT {recurveTablePetName}.`{recurveField.FieldName}` FROM `{recurveTableName}` AS {recurveTablePetName})";
-                    string queryObjectName = DataManager.GetQueryRelationObjectName(ServerType.MySQL, query);
+                    string queryObjectName = DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, query);
                     string withScript =
                     $"{recurveTableName} AS (SELECT {objectName}.`{recurveField.FieldName}`,{objectName}.`{recurveRelationField.FieldName}` FROM `{queryObjectName}` AS {objectName} {joinScript} {(string.IsNullOrWhiteSpace(nowConditionString) ? string.Empty : $"WHERE {nowConditionString}")} " +
                     $"UNION ALL SELECT {objectName}.`{recurveField.FieldName}`,{objectName}.`{recurveRelationField.FieldName}` FROM `{queryObjectName}` AS {objectName} JOIN {recurveTableName} AS {recurveTablePetName} " +
@@ -226,7 +229,7 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="queryItem">query condition</param>
         /// <returns></returns>
-        TranslateResult TranslateCondition(IQuery query, Tuple<QueryOperator, IQueryItem> queryItem, CmdParameters parameters, string objectName)
+        TranslateResult TranslateCondition(IQuery query, Tuple<QueryOperator, IQueryItem> queryItem, CommandParameters parameters, string objectName)
         {
             if (queryItem == null)
             {
@@ -238,12 +241,13 @@ namespace EZNEW.Data.MySQL
                 return TranslateCriteria(query, criteria, parameters, objectName);
             }
             IQuery groupQuery = queryItem.Item2 as IQuery;
-            if (groupQuery != null && groupQuery.Criterias != null && groupQuery.Criterias.Count > 0)
+            if (groupQuery != null && !groupQuery.Criterias.IsNullOrEmpty())
             {
                 groupQuery.SetEntityType(query.GetEntityType());
-                if (groupQuery.Criterias.Count == 1)
+                var criteriasCount = groupQuery.Criterias.Count();
+                if (criteriasCount == 1)
                 {
-                    var firstCriterias = groupQuery.Criterias[0];
+                    var firstCriterias = groupQuery.Criterias.First();
                     if (firstCriterias.Item2 is Criteria)
                     {
                         return TranslateCriteria(groupQuery, firstCriterias.Item2 as Criteria, parameters, objectName);
@@ -282,7 +286,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="criteria">criteria</param>
         /// <param name="parameters">parameters</param>
         /// <returns></returns>
-        TranslateResult TranslateCriteria(IQuery query, Criteria criteria, CmdParameters parameters, string objectName)
+        TranslateResult TranslateCriteria(IQuery query, Criteria criteria, CommandParameters parameters, string objectName)
         {
             if (criteria == null)
             {
@@ -295,24 +299,39 @@ namespace EZNEW.Data.MySQL
                 return TranslateResult.CreateNewResult($"{ConvertCriteriaName(query, objectName, criteria)} {sqlOperator}");
             }
             IQuery valueQuery = criteria.Value as IQuery;
-            string parameterName = GetNewParameterName(criteria.Name);//criteria.Name + ParameterSequence++;
+            string parameterName = GetNewParameterName(criteria.Name);
             if (valueQuery != null)
             {
-                var valueQueryObjectName = DataManager.GetQueryRelationObjectName(ServerType.MySQL, valueQuery);
-                var valueQueryField = DataManager.GetField(ServerType.MySQL, valueQuery, valueQuery.QueryFields[0]);
-                string subObjName = GetNewSubObjectPetName();
-                var subQueryResult = ExecuteTranslate(valueQuery, parameters, subObjName, true);
-                string topString = "";
-                if (sqlOperator != InOperator && sqlOperator != NotInOperator)
+                var valueQueryObjectName = DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, valueQuery);
+                if (valueQuery.QueryFields.IsNullOrEmpty())
                 {
-                    topString = "LIMIT 0,1";
+                    throw new EZNEWException($"The {valueQueryObjectName} query object that is a subquery must have at least one query field set");
                 }
+                var valueQueryField = DataManager.GetField(DatabaseServerType.MySQL, valueQuery, valueQuery.QueryFields.First());
+                string subObjName = GetNewSubObjectPetName();
+                var subqueryLimitResult = GetSubqueryLimitCondition(sqlOperator, valueQuery.QuerySize);
+                string topString = subqueryLimitResult.Item2;
+                var userOrder = !string.IsNullOrWhiteSpace(topString);
+                var subQueryResult = ExecuteTranslate(valueQuery, parameters, subObjName, true, userOrder);
                 string conditionString = subQueryResult.ConditionString;
+                string orderString = subQueryResult.OrderString;
                 if (!string.IsNullOrWhiteSpace(conditionString))
                 {
-                    conditionString = "WHERE " + conditionString;
+                    conditionString = $"WHERE {conditionString}";
                 }
-                var valueQueryCondition = $"{ConvertCriteriaName(valueQuery, objectName, criteria)} {sqlOperator} (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.OrderString} {topString})";
+                if (!string.IsNullOrWhiteSpace(orderString))
+                {
+                    orderString = $"ORDER BY {orderString}";
+                }
+                string valueQueryCondition;
+                if (subqueryLimitResult.Item1)
+                {
+                    valueQueryCondition = $"{ConvertCriteriaName(valueQuery, objectName, criteria)} {sqlOperator} (SELECT `{valueQueryField.FieldName}` FROM (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString}) AS S{subObjName})";
+                }
+                else
+                {
+                    valueQueryCondition = $"{ConvertCriteriaName(valueQuery, objectName, criteria)} {sqlOperator} (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString})";
+                }
                 var valueQueryResult = TranslateResult.CreateNewResult(valueQueryCondition);
                 if (!subQueryResult.WithScripts.IsNullOrEmpty())
                 {
@@ -434,7 +453,7 @@ namespace EZNEW.Data.MySQL
         /// <returns></returns>
         string ConvertCriteriaName(IQuery query, string objectName, Criteria criteria)
         {
-            return FormatCriteriaName(query, objectName, criteria.Name, criteria.Convert);
+            return FormatCriteriaName(query, objectName, criteria.Name, criteria.Converter);
         }
 
         /// <summary>
@@ -443,9 +462,9 @@ namespace EZNEW.Data.MySQL
         /// <param name="objectName">object name</param>
         /// <param name="orderCriteria">order criteria</param>
         /// <returns></returns>
-        string ConvertOrderCriteriaName(IQuery query, string objectName, OrderCriteria orderCriteria)
+        string ConvertOrderCriteriaName(IQuery query, string objectName, SortCriteria orderCriteria)
         {
-            return FormatCriteriaName(query, objectName, orderCriteria.Name, orderCriteria.Convert);
+            return FormatCriteriaName(query, objectName, orderCriteria.Name, orderCriteria.Converter);
         }
 
         /// <summary>
@@ -455,15 +474,15 @@ namespace EZNEW.Data.MySQL
         /// <param name="fieldName">field name</param>
         /// <param name="convert">convert</param>
         /// <returns></returns>
-        string FormatCriteriaName(IQuery query, string objectName, string fieldName, ICriteriaConvert convert)
+        string FormatCriteriaName(IQuery query, string objectName, string fieldName, ICriteriaConverter convert)
         {
-            var field = DataManager.GetField(ServerType.MySQL, query, fieldName);
+            var field = DataManager.GetField(DatabaseServerType.MySQL, query, fieldName);
             fieldName = field.FieldName;
             if (convert == null)
             {
                 return $"{objectName}.`{fieldName}`";
             }
-            return MySqlFactory.ParseCriteriaConvert(convert, objectName, fieldName);
+            return MySqlFactory.ParseCriteriaConverter(convert, objectName, fieldName);
         }
 
         /// <summary>
@@ -488,7 +507,7 @@ namespace EZNEW.Data.MySQL
             {
                 return string.Empty;
             }
-            var joinFields = joinItem?.JoinFields.Where(r => !r.Key.IsNullOrEmpty() && !r.Value.IsNullOrEmpty());
+            var joinFields = joinItem?.JoinFields.Where(r => !string.IsNullOrWhiteSpace(r.Key) && !string.IsNullOrWhiteSpace(r.Value));
             var sourceEntityType = sourceQuery.GetEntityType();
             var targetEntityType = joinItem.JoinQuery.GetEntityType();
             bool useValueAsSource = false;
@@ -509,12 +528,12 @@ namespace EZNEW.Data.MySQL
             List<string> joinList = new List<string>();
             foreach (var joinField in joinFields)
             {
-                if (joinField.Key.IsNullOrEmpty() || joinField.Value.IsNullOrEmpty())
+                if (string.IsNullOrWhiteSpace(joinField.Key) || string.IsNullOrWhiteSpace(joinField.Value))
                 {
                     continue;
                 }
-                var sourceField = DataManager.GetField(ServerType.MySQL, sourceEntityType, joinField.Key);
-                var targetField = DataManager.GetField(ServerType.MySQL, targetEntityType, joinField.Value);
+                var sourceField = DataManager.GetField(DatabaseServerType.MySQL, sourceEntityType, joinField.Key);
+                var targetField = DataManager.GetField(DatabaseServerType.MySQL, targetEntityType, joinField.Value);
                 joinList.Add($" {sourceObjShortName}.`{(useValueAsSource ? targetField.FieldName : sourceField.FieldName)}`{GetJoinOperator(joinItem.Operator)}{targetObjShortName}.`{(useValueAsSource ? sourceField.FieldName : targetField.FieldName)}`");
             }
             return joinList.IsNullOrEmpty() ? string.Empty : " ON" + string.Join(" AND", joinList);
@@ -604,6 +623,34 @@ namespace EZNEW.Data.MySQL
         void Init()
         {
             recurveObjectSequence = subObjectSequence = 0;
+        }
+
+        /// <summary>
+        /// get sub query limit condition
+        /// item1:use wapper subquery condition
+        /// item2:limit string
+        /// </summary>
+        /// <param name="sqlOperator">sql operator</param>
+        /// <param name="querySize">query size</param>
+        Tuple<bool, string> GetSubqueryLimitCondition(string sqlOperator, int querySize)
+        {
+            var limitString = string.Empty;
+            bool useWapper = false;
+            switch (sqlOperator)
+            {
+                case InOperator:
+                case NotInOperator:
+                    if (querySize > 0)
+                    {
+                        limitString = $"LIMIT 0,{querySize}";
+                        useWapper = true;
+                    }
+                    break;
+                default:
+                    limitString = $"LIMIT 0,1";
+                    break;
+            }
+            return new Tuple<bool, string>(useWapper, limitString);
         }
 
         #endregion
