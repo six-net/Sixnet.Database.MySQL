@@ -84,6 +84,10 @@ namespace EZNEW.Data.MySQL
             {
                 result.PreScript = FormatWithScript(result.WithScripts);
             }
+            if (!string.IsNullOrWhiteSpace(result.JoinExtraConditionString))
+            {
+                result.ConditionString = string.IsNullOrWhiteSpace(result.ConditionString) ? result.JoinExtraConditionString : $"{result.ConditionString} AND {result.JoinExtraConditionString}";
+            }
             return result;
         }
 
@@ -143,10 +147,61 @@ namespace EZNEW.Data.MySQL
 
                 #endregion
 
+                #region combine
+
+                StringBuilder combineBuilder = new StringBuilder();
+                if (!query.CombineItems.IsNullOrEmpty())
+                {
+                    foreach (var combine in query.CombineItems)
+                    {
+                        if (combine?.CombineQuery == null)
+                        {
+                            continue;
+                        }
+                        switch (combine.CombineType)
+                        {
+                            case CombineType.Except:
+                                var exceptFields = GetCombineFields(query, combine.CombineQuery);
+                                var exceptQuery = QueryManager.Create().SetEntityType(query.GetEntityType()).IsNull(exceptFields.First());
+                                var exceptJoinItem = new JoinItem()
+                                {
+                                    JoinType = JoinType.LeftJoin,
+                                    JoinQuery = combine.CombineQuery,
+                                    Operator = JoinOperator.Equal,
+                                    JoinFields = exceptFields.ToDictionary(c => c, c => c),
+                                    ExtraQuery = exceptQuery
+                                };
+                                query.Join(exceptJoinItem);
+                                break;
+                            case CombineType.Intersect:
+                                var intersectFields = GetCombineFields(query, combine.CombineQuery);
+                                query.Join(intersectFields.ToDictionary(c => c, c => c), JoinType.InnerJoin, JoinOperator.Equal, combine.CombineQuery);
+                                break;
+                            default:
+                                var combineObjectPetName = GetNewSubObjectPetName();
+                                string combineObjectName = DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, combine.CombineQuery);
+                                var combineQueryResult = ExecuteTranslate(combine.CombineQuery, parameters, combineObjectPetName, true, true);
+                                string combineConditionString = string.IsNullOrWhiteSpace(combineQueryResult.ConditionString) ? string.Empty : $"WHERE {combineQueryResult.ConditionString}";
+                                combineBuilder.Append($" {GetCombineOperator(combine.CombineType)} SELECT {string.Join(",", MySqlFactory.FormatQueryFields(combineObjectPetName, query, query.GetEntityType(), true, false))} FROM `{combineObjectName}` AS {combineObjectPetName} {(combineQueryResult.AllowJoin ? combineQueryResult.JoinScript : string.Empty)} {combineConditionString}");
+                                if (!combineQueryResult.WithScripts.IsNullOrEmpty())
+                                {
+                                    withScripts.AddRange(combineQueryResult.WithScripts);
+                                    recurveTableName = combineQueryResult.RecurveObjectName;
+                                    recurveTablePetName = combineQueryResult.RecurvePetName;
+                                }
+                                break;
+                        }
+                    }
+
+                }
+
+                #endregion
+
                 #region join
 
                 bool allowJoin = true;
                 StringBuilder joinBuilder = new StringBuilder();
+                StringBuilder joinExtraCondition = new StringBuilder();
                 if (!query.JoinItems.IsNullOrEmpty())
                 {
                     foreach (var joinItem in query.JoinItems)
@@ -161,18 +216,43 @@ namespace EZNEW.Data.MySQL
                         }
                         string joinObjName = GetNewSubObjectPetName();
                         var joinQueryResult = ExecuteTranslate(joinItem.JoinQuery, parameters, joinObjName, true, true);
-                        if (!string.IsNullOrWhiteSpace(joinQueryResult.ConditionString))
+                        if (string.IsNullOrWhiteSpace(joinQueryResult.CombineScript))
                         {
-                            conditionBuilder.Append($"{(conditionBuilder.Length == 0 ? string.Empty : " AND")}{joinQueryResult.ConditionString}");
+                            var joinConnection = GetJoinCondition(query, joinItem, objectName, joinObjName);
+                            if (!string.IsNullOrWhiteSpace(joinQueryResult.ConditionString))
+                            {
+                                if (joinQueryResult.AllowJoin && PositionJoinConditionToConnection(joinItem.JoinType))
+                                {
+                                    joinConnection += $"{(string.IsNullOrWhiteSpace(joinConnection) ? " ON" : " AND ")}{joinQueryResult.ConditionString}";
+                                }
+                                else
+                                {
+                                    conditionBuilder.Append($"{(conditionBuilder.Length == 0 ? string.Empty : " AND ")}{joinQueryResult.ConditionString}");
+                                }
+                            }
+                            if (!string.IsNullOrWhiteSpace(joinQueryResult.JoinExtraConditionString))
+                            {
+                                conditionBuilder.Append($"{(conditionBuilder.Length == 0 ? string.Empty : " AND ")}{joinQueryResult.JoinExtraConditionString}");
+                            }
+                            joinBuilder.Append($" {GetJoinOperator(joinItem.JoinType)} `{DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, joinItem.JoinQuery)}` AS {joinObjName}{joinConnection}");
+                            if (joinItem.ExtraQuery != null)
+                            {
+                                var extraQueryResult = ExecuteTranslate(joinItem.ExtraQuery, parameters, joinObjName, true, true);
+                                if (!string.IsNullOrWhiteSpace(extraQueryResult.ConditionString))
+                                {
+                                    joinExtraCondition.Append(joinExtraCondition.Length > 0 ? $" AND {extraQueryResult.ConditionString}" : extraQueryResult.ConditionString);
+                                }
+                            }
+                            if (joinQueryResult.AllowJoin && !string.IsNullOrWhiteSpace(joinQueryResult.JoinScript))
+                            {
+                                joinBuilder.Append($" {joinQueryResult.JoinScript}");
+                            }
                         }
-                        joinBuilder.Append($"{GetJoinOperator(joinItem.JoinType)} `{DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, joinItem.JoinQuery)}` AS {joinObjName}{GetJoinCondition(query, joinItem, objectName, joinObjName)}");
-                        if (!string.IsNullOrWhiteSpace(joinQueryResult.JoinScript))
+                        else
                         {
-                            joinBuilder.Append($" {joinQueryResult.JoinScript}");
-                        }
-                        if (!string.IsNullOrWhiteSpace(joinQueryResult.OrderString))
-                        {
-                            orderBuilder.Append(joinQueryResult.OrderString);
+                            var combineJoinObjName = GetNewSubObjectPetName();
+                            var joinConnection = GetJoinCondition(query, joinItem, objectName, combineJoinObjName);
+                            joinBuilder.Append($" {GetJoinOperator(joinItem.JoinType)} (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(joinObjName, joinItem.JoinQuery, joinItem.JoinQuery.GetEntityType(), false, false))} FROM `{DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, joinItem.JoinQuery)}` AS {joinObjName} {(joinQueryResult.AllowJoin ? joinQueryResult.JoinScript : string.Empty)} {(string.IsNullOrWhiteSpace(joinQueryResult.ConditionString) ? string.Empty : "WHERE " + joinQueryResult.ConditionString)} {joinQueryResult.CombineScript}) AS {combineJoinObjName}{joinConnection}");
                         }
                         if (!joinQueryResult.WithScripts.IsNullOrEmpty())
                         {
@@ -189,10 +269,16 @@ namespace EZNEW.Data.MySQL
                 #region recurve script
 
                 string conditionString = conditionBuilder.ToString();
+                string joinExtraConditionString = joinExtraCondition.ToString();
                 if (query.RecurveCriteria != null)
                 {
                     allowJoin = false;
                     string nowConditionString = conditionString;
+                    if (!string.IsNullOrWhiteSpace(joinExtraConditionString))
+                    {
+                        nowConditionString = string.IsNullOrWhiteSpace(nowConditionString) ? joinExtraConditionString : $"{nowConditionString} AND {joinExtraConditionString}";
+                        joinExtraConditionString = string.Empty;
+                    }
                     EntityField recurveField = DataManager.GetField(DatabaseServerType.MySQL, query, query.RecurveCriteria.Key);
                     EntityField recurveRelationField = DataManager.GetField(DatabaseServerType.MySQL, query, query.RecurveCriteria.RelationKey);
                     var recurveTable = GetNewRecurveTableName();
@@ -212,6 +298,8 @@ namespace EZNEW.Data.MySQL
                 result.WithScripts = withScripts;
                 result.RecurveObjectName = recurveTableName;
                 result.RecurvePetName = recurveTablePetName;
+                result.CombineScript = combineBuilder.ToString();
+                result.JoinExtraConditionString = joinExtraConditionString;
 
                 #endregion
 
@@ -294,9 +382,10 @@ namespace EZNEW.Data.MySQL
             }
             string sqlOperator = GetOperator(criteria.Operator);
             bool needParameter = OperatorNeedParameter(criteria.Operator);
+            string criteriaFieldName = ConvertCriteriaName(query, objectName, criteria);
             if (!needParameter)
             {
-                return TranslateResult.CreateNewResult($"{ConvertCriteriaName(query, objectName, criteria)} {sqlOperator}");
+                return TranslateResult.CreateNewResult($"{criteriaFieldName} {sqlOperator}");
             }
             IQuery valueQuery = criteria.Value as IQuery;
             string parameterName = GetNewParameterName(criteria.Name);
@@ -313,24 +402,20 @@ namespace EZNEW.Data.MySQL
                 string topString = subqueryLimitResult.Item2;
                 var userOrder = !string.IsNullOrWhiteSpace(topString);
                 var subQueryResult = ExecuteTranslate(valueQuery, parameters, subObjName, true, userOrder);
-                string conditionString = subQueryResult.ConditionString;
-                string orderString = subQueryResult.OrderString;
-                if (!string.IsNullOrWhiteSpace(conditionString))
-                {
-                    conditionString = $"WHERE {conditionString}";
-                }
-                if (!string.IsNullOrWhiteSpace(orderString))
-                {
-                    orderString = $"ORDER BY {orderString}";
-                }
+                string conditionString = string.IsNullOrWhiteSpace(subQueryResult.ConditionString) ? string.Empty : $"WHERE {subQueryResult.ConditionString}";
+                string orderString = string.IsNullOrWhiteSpace(subQueryResult.OrderString) ? string.Empty : $"ORDER BY {subQueryResult.OrderString}";
                 string valueQueryCondition;
                 if (subqueryLimitResult.Item1)
                 {
-                    valueQueryCondition = $"{ConvertCriteriaName(valueQuery, objectName, criteria)} {sqlOperator} (SELECT `{valueQueryField.FieldName}` FROM (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString}) AS S{subObjName})";
+                    valueQueryCondition = string.IsNullOrWhiteSpace(subQueryResult.CombineScript)
+                        ? $"{criteriaFieldName} {sqlOperator} (SELECT `{valueQueryField.FieldName}` FROM (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString}) AS S{subObjName})"
+                        : $"{criteriaFieldName} {sqlOperator} (SELECT `{valueQueryField.FieldName}` FROM (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(subObjName, valueQuery, valueQuery.GetEntityType(), true, false))} FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.CombineScript}) AS {subObjName} {orderString} {topString}) AS S{subObjName})";
                 }
                 else
                 {
-                    valueQueryCondition = $"{ConvertCriteriaName(valueQuery, objectName, criteria)} {sqlOperator} (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString})";
+                    valueQueryCondition = string.IsNullOrWhiteSpace(subQueryResult.CombineScript)
+                        ? $"{criteriaFieldName} {sqlOperator} (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString})"
+                        : $"{criteriaFieldName} {sqlOperator} (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(subObjName, valueQuery, valueQuery.GetEntityType(), true, false))} FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.CombineScript}) AS {subObjName} {orderString} {topString})";
                 }
                 var valueQueryResult = TranslateResult.CreateNewResult(valueQueryCondition);
                 if (!subQueryResult.WithScripts.IsNullOrEmpty())
@@ -342,7 +427,7 @@ namespace EZNEW.Data.MySQL
                 return valueQueryResult;
             }
             parameters.Add(parameterName, FormatCriteriaValue(criteria.Operator, criteria.GetCriteriaRealValue()));
-            var criteriaCondition = $"{ConvertCriteriaName(query, objectName, criteria)} {sqlOperator} {parameterPrefix}{parameterName}";
+            var criteriaCondition = $"{criteriaFieldName} {sqlOperator} {parameterPrefix}{parameterName}";
             return TranslateResult.CreateNewResult(criteriaCondition);
         }
 
@@ -496,6 +581,26 @@ namespace EZNEW.Data.MySQL
         }
 
         /// <summary>
+        /// Determines whether position join condition to connection
+        /// </summary>
+        /// <param name="joinType">Join type</param>
+        /// <returns></returns>
+        bool PositionJoinConditionToConnection(JoinType joinType)
+        {
+            switch (joinType)
+            {
+                case JoinType.CrossJoin:
+                    return false;
+                case JoinType.InnerJoin:
+                case JoinType.LeftJoin:
+                case JoinType.RightJoin:
+                case JoinType.FullJoin:
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>
         /// get join condition
         /// </summary>
         /// <param name="sourceQuery">source query</param>
@@ -513,18 +618,29 @@ namespace EZNEW.Data.MySQL
             bool useValueAsSource = false;
             if (joinFields.IsNullOrEmpty())
             {
-                joinFields = EntityManager.GetRelationFields(sourceEntityType, targetEntityType);
+                if (sourceEntityType == targetEntityType)
+                {
+                    var primaryKeys = EntityManager.GetPrimaryKeys(sourceEntityType);
+                    if (primaryKeys.IsNullOrEmpty())
+                    {
+                        return string.Empty;
+                    }
+                    joinFields = primaryKeys.ToDictionary(c => c, c => c);
+                }
+                else
+                {
+                    joinFields = EntityManager.GetRelationFields(sourceEntityType, targetEntityType);
+                    if (joinFields.IsNullOrEmpty())
+                    {
+                        useValueAsSource = true;
+                        joinFields = EntityManager.GetRelationFields(targetEntityType, sourceEntityType);
+                    }
+                    if (joinFields.IsNullOrEmpty())
+                    {
+                        return string.Empty;
+                    }
+                }
             }
-            if (joinFields.IsNullOrEmpty())
-            {
-                useValueAsSource = true;
-                joinFields = EntityManager.GetRelationFields(targetEntityType, sourceEntityType);
-            }
-            if (joinFields.IsNullOrEmpty())
-            {
-                return string.Empty;
-            }
-
             List<string> joinList = new List<string>();
             foreach (var joinField in joinFields)
             {
@@ -651,6 +767,45 @@ namespace EZNEW.Data.MySQL
                     break;
             }
             return new Tuple<bool, string>(useWapper, limitString);
+        }
+
+        /// <summary>
+        /// Get combine operator
+        /// </summary>
+        /// <param name="combineType">Combine type</param>
+        /// <returns>Return combine operator</returns>
+        string GetCombineOperator(CombineType combineType)
+        {
+            switch (combineType)
+            {
+                case CombineType.UnionAll:
+                    return "UNION ALL";
+                case CombineType.Union:
+                    return "UNION";
+                default:
+                    throw new InvalidOperationException($"MySQL not support {combineType}");
+            }
+        }
+
+        /// <summary>
+        /// Get combine fields
+        /// </summary>
+        /// <param name="originalQuery">Original query</param>
+        /// <param name="combineQuery">Combine query</param>
+        /// <returns></returns>
+        IEnumerable<string> GetCombineFields(IQuery originalQuery, IQuery combineQuery)
+        {
+            if (!combineQuery.QueryFields.IsNullOrEmpty())
+            {
+                return combineQuery.QueryFields;
+            }
+            var entityType = combineQuery.GetEntityType();
+            var primaryKeys = EntityManager.GetPrimaryKeys(entityType);
+            if (primaryKeys.IsNullOrEmpty())
+            {
+                return EntityManager.GetQueryFields(entityType);
+            }
+            return primaryKeys;
         }
 
         #endregion

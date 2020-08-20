@@ -11,9 +11,7 @@ using EZNEW.Develop.CQuery.Translator;
 using EZNEW.Develop.Command;
 using EZNEW.Develop.Command.Modify;
 using EZNEW.Fault;
-using EZNEW.Develop.DataAccess;
 using EZNEW.Data.Configuration;
-using EZNEW.Serialize;
 
 namespace EZNEW.Data.MySQL
 {
@@ -22,26 +20,6 @@ namespace EZNEW.Data.MySQL
     /// </summary>
     public class MySqlEngine : IDatabaseEngine
     {
-        static readonly string FieldFormatKey = ((int)DatabaseServerType.MySQL).ToString();
-        const string ParameterPrefix = "?";
-        const string PagingTableName = "EZNEW_TEMTABLE_PAGING";
-        static readonly Dictionary<CalculateOperator, string> CalculateOperatorDictionary = new Dictionary<CalculateOperator, string>(4)
-        {
-            [CalculateOperator.Add] = "+",
-            [CalculateOperator.Subtract] = "-",
-            [CalculateOperator.Multiply] = "*",
-            [CalculateOperator.Divide] = "/",
-        };
-
-        static readonly Dictionary<OperateType, string> AggregateFunctionDictionary = new Dictionary<OperateType, string>(5)
-        {
-            [OperateType.Max] = "MAX",
-            [OperateType.Min] = "MIN",
-            [OperateType.Sum] = "SUM",
-            [OperateType.Avg] = "AVG",
-            [OperateType.Count] = "COUNT",
-        };
-
         #region Execute
 
         /// <summary>
@@ -178,13 +156,13 @@ namespace EZNEW.Data.MySQL
                 IDbTransaction transaction = null;
                 if (useTransaction)
                 {
-                    transaction = GetExecuteTransaction(conn, executeOption);
+                    transaction = MySqlFactory.GetExecuteTransaction(conn, executeOption);
                 }
                 try
                 {
                     foreach (var cmd in executeCommands)
                     {
-                        var cmdDefinition = new CommandDefinition(cmd.CommandText, ConvertCmdParameters(cmd.Parameters), transaction: transaction, commandType: cmd.CommandType, cancellationToken: executeOption?.CancellationToken ?? default);
+                        var cmdDefinition = new CommandDefinition(cmd.CommandText, MySqlFactory.ConvertCmdParameters(cmd.Parameters), transaction: transaction, commandType: cmd.CommandType, cancellationToken: executeOption?.CancellationToken ?? default);
                         var executeResultValue = await conn.ExecuteAsync(cmdDefinition).ConfigureAwait(false);
                         success = success && (cmd.ForceReturnValue ? executeResultValue > 0 : true);
                         resultValue += executeResultValue;
@@ -229,8 +207,8 @@ namespace EZNEW.Data.MySQL
                 return new DatabaseExecuteCommand()
                 {
                     CommandText = command.CommandText,
-                    Parameters = ParseParameters(command.Parameters),
-                    CommandType = GetCommandType(command),
+                    Parameters = MySqlFactory.ParseParameters(command.Parameters),
+                    CommandType = MySqlFactory.GetCommandType(command),
                     ForceReturnValue = command.MustReturnValueOnSuccess,
                     HasPreScript = true
                 };
@@ -268,18 +246,19 @@ namespace EZNEW.Data.MySQL
         {
             string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
             var fields = DataManager.GetEditFields(DatabaseServerType.MySQL, command.EntityType);
-            var insertFormatResult = FormatInsertFields(fields, command.Parameters, translator.ParameterSequence);
+            var fieldCount = fields.GetCount();
+            var insertFormatResult = MySqlFactory.FormatInsertFields(fieldCount, fields, command.Parameters, translator.ParameterSequence);
             if (insertFormatResult == null)
             {
                 return null;
             }
             string cmdText = $"INSERT INTO `{objectName}` ({string.Join(",", insertFormatResult.Item1)}) VALUES ({string.Join(",", insertFormatResult.Item2)});";
             CommandParameters parameters = insertFormatResult.Item3;
-            translator.ParameterSequence += fields.Count;
+            translator.ParameterSequence += fieldCount;
             return new DatabaseExecuteCommand()
             {
                 CommandText = cmdText,
-                CommandType = GetCommandType(command),
+                CommandType = MySqlFactory.GetCommandType(command),
                 ForceReturnValue = command.MustReturnValueOnSuccess,
                 Parameters = parameters
             };
@@ -308,9 +287,9 @@ namespace EZNEW.Data.MySQL
 
             #region script 
 
-            CommandParameters parameters = ParseParameters(command.Parameters) ?? new CommandParameters();
+            CommandParameters parameters = MySqlFactory.ParseParameters(command.Parameters) ?? new CommandParameters();
             string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-            var fields = GetFields(command.EntityType, command.Fields);
+            var fields = MySqlFactory.GetFields(command.EntityType, command.Fields);
             int parameterSequence = translator.ParameterSequence;
             List<string> updateSetArray = new List<string>();
             foreach (var field in fields)
@@ -321,7 +300,7 @@ namespace EZNEW.Data.MySQL
                 if (parameterValue != null)
                 {
                     parameterSequence++;
-                    parameterName = FormatParameterName(parameterName, parameterSequence);
+                    parameterName = MySqlFactory.FormatParameterName(parameterName, parameterSequence);
                     parameters.Rename(field.PropertyName, parameterName);
                     if (parameterValue is IModifyValue)
                     {
@@ -330,14 +309,14 @@ namespace EZNEW.Data.MySQL
                         if (parameterValue is CalculateModifyValue)
                         {
                             var calculateModifyValue = parameterValue as CalculateModifyValue;
-                            string calChar = GetCalculateChar(calculateModifyValue.Operator);
-                            newValueExpression = $"{translator.ObjectPetName}.`{field.FieldName}`{calChar}{ParameterPrefix}{parameterName}";
+                            string calChar = MySqlFactory.GetCalculateChar(calculateModifyValue.Operator);
+                            newValueExpression = $"{translator.ObjectPetName}.`{field.FieldName}`{calChar}{MySqlFactory.ParameterPrefix}{parameterName}";
                         }
                     }
                 }
                 if (string.IsNullOrWhiteSpace(newValueExpression))
                 {
-                    newValueExpression = $"{ParameterPrefix}{parameterName}";
+                    newValueExpression = $"{MySqlFactory.ParameterPrefix}{parameterName}";
                 }
                 updateSetArray.Add($"{translator.ObjectPetName}.`{field.FieldName}`={newValueExpression}");
             }
@@ -348,7 +327,7 @@ namespace EZNEW.Data.MySQL
 
             #region parameter
 
-            var queryParameters = ParseParameters(tranResult.Parameters);
+            var queryParameters = MySqlFactory.ParseParameters(tranResult.Parameters);
             parameters.Union(queryParameters);
 
             #endregion
@@ -356,7 +335,7 @@ namespace EZNEW.Data.MySQL
             return new DatabaseExecuteCommand()
             {
                 CommandText = cmdText,
-                CommandType = GetCommandType(command),
+                CommandType = MySqlFactory.GetCommandType(command),
                 ForceReturnValue = command.MustReturnValueOnSuccess,
                 Parameters = parameters,
                 HasPreScript = !string.IsNullOrWhiteSpace(preScript)
@@ -393,8 +372,8 @@ namespace EZNEW.Data.MySQL
 
             #region parameter
 
-            CommandParameters parameters = ParseParameters(command.Parameters) ?? new CommandParameters();
-            var queryParameters = ParseParameters(tranResult.Parameters);
+            CommandParameters parameters = MySqlFactory.ParseParameters(command.Parameters) ?? new CommandParameters();
+            var queryParameters = MySqlFactory.ParseParameters(tranResult.Parameters);
             parameters.Union(queryParameters);
 
             #endregion
@@ -402,7 +381,7 @@ namespace EZNEW.Data.MySQL
             return new DatabaseExecuteCommand()
             {
                 CommandText = cmdText,
-                CommandType = GetCommandType(command),
+                CommandType = MySqlFactory.GetCommandType(command),
                 ForceReturnValue = command.MustReturnValueOnSuccess,
                 Parameters = parameters,
                 HasPreScript = !string.IsNullOrWhiteSpace(preScript)
@@ -459,7 +438,18 @@ namespace EZNEW.Data.MySQL
                 default:
                     int size = command.Query.QuerySize;
                     string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-                    cmdText = $"{tranResult.PreScript}SELECT {string.Join(",", FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, out var defaultFieldName))} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? string.Empty : $"ORDER BY {tranResult.OrderString}")} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                    string orderString = string.IsNullOrWhiteSpace(tranResult.OrderString) ? string.Empty : $"ORDER BY {tranResult.OrderString}";
+                    var queryFields = MySqlFactory.GetQueryFields(command.Query, command.EntityType, true);
+                    string outputFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
+                    if (string.IsNullOrWhiteSpace(tranResult.CombineScript))
+                    {
+                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                    }
+                    else
+                    {
+                        string innerFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
+                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM (SELECT {innerFormatedField} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                    }
                     break;
             }
 
@@ -467,7 +457,7 @@ namespace EZNEW.Data.MySQL
 
             #region parameter
 
-            var parameters = ConvertCmdParameters(ParseParameters(tranResult.Parameters));
+            var parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(tranResult.Parameters));
 
             #endregion
 
@@ -476,8 +466,8 @@ namespace EZNEW.Data.MySQL
 
             using (var conn = MySqlFactory.GetConnection(server))
             {
-                var tran = GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.QueryAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
@@ -564,9 +554,12 @@ namespace EZNEW.Data.MySQL
                 default:
                     string limitString = $"LIMIT {offsetNum},{size}";
                     string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-                    List<string> formatQueryFields = FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, out var defaultFieldName);
-                    var queryScript = $"SELECT {string.Join(", ", formatQueryFields)} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")}";
-                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({defaultFieldName}) FROM {PagingTableName}) AS QueryDataTotalCount,{translator.ObjectPetName}.* FROM {PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? $"{translator.ObjectPetName}.`{defaultFieldName}` DESC" : $"{tranResult.OrderString}")} {limitString}";
+                    string defaultFieldName = MySqlFactory.GetDefaultFieldName(command.EntityType);
+                    var queryFields = MySqlFactory.GetQueryFields(command.Query, command.EntityType, true);
+                    string innerFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
+                    string outputFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
+                    string queryScript = $"SELECT {innerFormatedField} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}";
+                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {MySqlFactory.PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{MySqlFactory.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({defaultFieldName}) FROM {MySqlFactory.PagingTableName}) AS QueryDataTotalCount,{outputFormatedField} FROM {MySqlFactory.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? $"{translator.ObjectPetName}.`{defaultFieldName}` DESC" : $"{tranResult.OrderString}")} {limitString}";
                     break;
             }
 
@@ -574,7 +567,7 @@ namespace EZNEW.Data.MySQL
 
             #region parameter
 
-            var parameters = ConvertCmdParameters(ParseParameters(tranResult.Parameters));
+            var parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(tranResult.Parameters));
 
             #endregion
 
@@ -583,8 +576,8 @@ namespace EZNEW.Data.MySQL
 
             using (var conn = MySqlFactory.GetConnection(server))
             {
-                var tran = GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.QueryAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
@@ -612,12 +605,15 @@ namespace EZNEW.Data.MySQL
 
             #region query translate
 
-            var tranResult = translator.Translate(command.Query);
-            string conditionString = string.Empty;
-            if (!string.IsNullOrWhiteSpace(tranResult.ConditionString))
+            command.Query.ClearQueryFields();
+            var queryFields = EntityManager.GetPrimaryKeys(command.EntityType).ToArray();
+            if (queryFields.IsNullOrEmpty())
             {
-                conditionString = $"WHERE {tranResult.ConditionString}";
+                queryFields = EntityManager.GetQueryFields(command.EntityType).ToArray();
             }
+            command.Query.AddQueryFields(queryFields);
+            var tranResult = translator.Translate(command.Query);
+            string conditionString = string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}";
             string preScript = tranResult.PreScript;
             string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
 
@@ -625,15 +621,14 @@ namespace EZNEW.Data.MySQL
 
             #region script
 
-            var field = DataManager.GetDefaultField(DatabaseServerType.MySQL, command.EntityType);
             string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-            string cmdText = $"{preScript}SELECT EXISTS(SELECT {translator.ObjectPetName}.`{field.FieldName}` FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {conditionString})";
+            string cmdText = $"{preScript}SELECT EXISTS(SELECT {string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {conditionString} {tranResult.CombineScript})";
 
             #endregion
 
             #region parameter
 
-            var parameters = ConvertCmdParameters(ParseParameters(tranResult.Parameters));
+            var parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(tranResult.Parameters));
 
             #endregion
 
@@ -642,7 +637,7 @@ namespace EZNEW.Data.MySQL
 
             using (var conn = MySqlFactory.GetConnection(server))
             {
-                var tran = GetQueryTransaction(conn, command.Query);
+                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
                 var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 int value = await conn.ExecuteScalarAsync<int>(cmdDefinition).ConfigureAwait(false);
                 return value > 0;
@@ -677,6 +672,51 @@ namespace EZNEW.Data.MySQL
 
             #region query translate
 
+            bool queryObject = command.Query.QueryType == QueryCommandType.QueryObject;
+            string funcName = MySqlFactory.GetAggregateFunctionName(command.OperateType);
+            EntityField defaultField = null;
+            if (queryObject)
+            {
+                if (string.IsNullOrWhiteSpace(funcName))
+                {
+                    throw new NotSupportedException($"Not support {command.OperateType}");
+                }
+                if (MySqlFactory.AggregateOperateMustNeedField(command.OperateType))
+                {
+                    if (command.Query.QueryFields.IsNullOrEmpty())
+                    {
+                        throw new EZNEWException($"You must specify the field to perform for the {funcName} operation");
+                    }
+                    defaultField = DataManager.GetField(DatabaseServerType.MySQL, command.EntityType, command.Query.QueryFields.First());
+                }
+                else
+                {
+                    defaultField = DataManager.GetDefaultField(DatabaseServerType.MySQL, command.EntityType);
+                }
+                //combine fields
+                if (!command.Query.CombineItems.IsNullOrEmpty())
+                {
+                    var combineKeys = EntityManager.GetPrimaryKeys(command.EntityType).Union(new string[1] { defaultField.PropertyName }).ToArray();
+                    command.Query.ClearQueryFields();
+                    foreach (var combineItem in command.Query.CombineItems)
+                    {
+                        combineItem.CombineQuery.ClearQueryFields();
+                        if (combineKeys.IsNullOrEmpty())
+                        {
+                            combineItem.CombineQuery.ClearNotQueryFields();
+                            command.Query.ClearNotQueryFields();
+                        }
+                        else
+                        {
+                            command.Query.AddQueryFields(combineKeys);
+                            if (combineItem.CombineType == CombineType.Union || combineItem.CombineType == CombineType.UnionAll)
+                            {
+                                combineItem.CombineQuery.AddQueryFields(combineKeys);
+                            }
+                        }
+                    }
+                }
+            }
             IQueryTranslator translator = MySqlFactory.GetQueryTranslator(server);
             var tranResult = translator.Translate(command.Query);
 
@@ -693,32 +733,10 @@ namespace EZNEW.Data.MySQL
                     break;
                 case QueryCommandType.QueryObject:
                 default:
-                    string funcName = GetAggregateFunctionName(command.OperateType);
-                    if (string.IsNullOrWhiteSpace(funcName))
-                    {
-                        return default;
-                    }
-
-                    #region field
-
-                    EntityField field = null;
-                    if (AggregateOperateMustNeedField(command.OperateType))
-                    {
-                        if (command.Query.QueryFields.IsNullOrEmpty())
-                        {
-                            throw new EZNEWException($"You must specify the field to perform for the {funcName} operation");
-                        }
-                        field = DataManager.GetField(DatabaseServerType.MySQL, command.EntityType, command.Query.QueryFields.First());
-                    }
-                    else
-                    {
-                        field = DataManager.GetDefaultField(DatabaseServerType.MySQL, command.EntityType);
-                    }
-
-                    #endregion
-
                     string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-                    cmdText = $"{tranResult.PreScript}SELECT {funcName}({FormatField(translator.ObjectPetName, field)}) FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? string.Empty : $"ORDER BY {tranResult.OrderString}")}";
+                    cmdText = string.IsNullOrWhiteSpace(tranResult.CombineScript)
+                        ? $"{tranResult.PreScript}SELECT {funcName}({MySqlFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")}"
+                        : $"{tranResult.PreScript}SELECT {funcName}({MySqlFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName}";
                     break;
             }
 
@@ -726,7 +744,7 @@ namespace EZNEW.Data.MySQL
 
             #region parameter
 
-            var parameters = ConvertCmdParameters(ParseParameters(tranResult.Parameters));
+            var parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(tranResult.Parameters));
 
             #endregion
 
@@ -735,8 +753,8 @@ namespace EZNEW.Data.MySQL
 
             using (var conn = MySqlFactory.GetConnection(server))
             {
-                var tran = GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.ExecuteScalarAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
@@ -753,9 +771,9 @@ namespace EZNEW.Data.MySQL
             MySqlFactory.LogScript(command.CommandText, command.Parameters);
             using (var conn = MySqlFactory.GetConnection(server))
             {
-                var tran = GetQueryTransaction(conn, command.Query);
-                DynamicParameters parameters = ConvertCmdParameters(ParseParameters(command.Parameters));
-                var cmdDefinition = new CommandDefinition(command.CommandText, parameters, transaction: tran, commandType: GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
+                DynamicParameters parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(command.Parameters));
+                var cmdDefinition = new CommandDefinition(command.CommandText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 using (var reader = await conn.ExecuteReaderAsync(cmdDefinition).ConfigureAwait(false))
                 {
                     DataSet dataSet = new DataSet();
@@ -768,300 +786,6 @@ namespace EZNEW.Data.MySQL
                     return dataSet;
                 }
             }
-        }
-
-        #endregion
-
-        #region Util
-
-        /// <summary>
-        /// Get command type
-        /// </summary>
-        /// <param name="command">Command</param>
-        /// <returns>Return command type</returns>
-        CommandType GetCommandType(RdbCommand command)
-        {
-            return command.CommandType == CommandTextType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
-        }
-
-        /// <summary>
-        /// Get calculate sign
-        /// </summary>
-        /// <param name="calculate">Calculate operator</param>
-        /// <returns></returns>
-        string GetCalculateChar(CalculateOperator calculate)
-        {
-            CalculateOperatorDictionary.TryGetValue(calculate, out var opearterChar);
-            return opearterChar;
-        }
-
-        /// <summary>
-        /// Get aggregate function name
-        /// </summary>
-        /// <param name="funcType">Function type</param>
-        /// <returns></returns>
-        string GetAggregateFunctionName(OperateType funcType)
-        {
-            AggregateFunctionDictionary.TryGetValue(funcType, out var funcName);
-            return funcName;
-        }
-
-        /// <summary>
-        /// Aggregate operate must need field
-        /// </summary>
-        /// <param name="operateType">Operate type</param>
-        /// <returns></returns>
-        bool AggregateOperateMustNeedField(OperateType operateType)
-        {
-            return operateType != OperateType.Count;
-        }
-
-        /// <summary>
-        /// Format insert fields
-        /// </summary>
-        /// <param name="fields">Fields</param>
-        /// <param name="parameters">Origin parameters</param>
-        /// <param name="parameterSequence">Parameter sequence</param>
-        /// <returns>first:fields,second:parameter fields,third:parameters</returns>
-        Tuple<List<string>, List<string>, CommandParameters> FormatInsertFields(List<EntityField> fields, object parameters, int parameterSequence)
-        {
-            if (fields.IsNullOrEmpty())
-            {
-                return null;
-            }
-            List<string> formatFields = new List<string>(fields.Count);
-            List<string> parameterFields = new List<string>(fields.Count);
-            CommandParameters cmdParameters = ParseParameters(parameters);
-            foreach (var field in fields)
-            {
-                //fields
-                var formatValue = field.GetEditFormat(FieldFormatKey);
-                if (string.IsNullOrWhiteSpace(formatValue))
-                {
-                    formatValue = string.Format("`{0}`", field.FieldName);
-                    field.SetEditFormat(FieldFormatKey, formatValue);
-                }
-                formatFields.Add(formatValue);
-
-                //parameter name
-                parameterSequence++;
-                string parameterName = field.PropertyName + parameterSequence;
-                parameterFields.Add($"{ParameterPrefix}{parameterName}");
-
-                //parameter value
-                cmdParameters?.Rename(field.PropertyName, parameterName);
-            }
-            return new Tuple<List<string>, List<string>, CommandParameters>(formatFields, parameterFields, cmdParameters);
-        }
-
-        /// <summary>
-        /// Format fields
-        /// </summary>
-        /// <param name="fields">Fields</param>
-        /// <returns></returns>
-        List<string> FormatQueryFields(string dbObjectName, IQuery query, Type entityType, out string defaultFieldName)
-        {
-            defaultFieldName = string.Empty;
-            if (query == null || entityType == null)
-            {
-                return new List<string>(0);
-            }
-            var queryFields = DataManager.GetQueryFields(DatabaseServerType.MySQL, entityType, query);
-            if (queryFields.IsNullOrEmpty())
-            {
-                return new List<string>(0);
-            }
-            defaultFieldName = queryFields[0].FieldName;
-            List<string> formatFields = new List<string>();
-            foreach (var field in queryFields)
-            {
-                var formatValue = FormatField(dbObjectName, field);
-                formatFields.Add(formatValue);
-            }
-            return formatFields;
-        }
-
-        /// <summary>
-        /// Format field
-        /// </summary>
-        /// <param name="dataBaseObjectName">Database object name</param>
-        /// <param name="field">field</param>
-        /// <returns></returns>
-        string FormatField(string dataBaseObjectName, EntityField field)
-        {
-            if (field == null)
-            {
-                return string.Empty;
-            }
-            var formatValue = field.GetQueryFormat(FieldFormatKey);
-            if (string.IsNullOrWhiteSpace(formatValue))
-            {
-                string fieldName = $"{dataBaseObjectName}.{field.FieldName}";
-                if (!string.IsNullOrWhiteSpace(field.QueryFormat))
-                {
-                    formatValue = string.Format(field.QueryFormat + " AS `{1}`", fieldName, field.PropertyName);
-                }
-                else if (field.FieldName != field.PropertyName)
-                {
-                    formatValue = $"{fieldName} AS `{field.PropertyName}`";
-                }
-                else
-                {
-                    formatValue = fieldName;
-                }
-                field.SetQueryFormat(FieldFormatKey, formatValue);
-            }
-            return formatValue;
-        }
-
-        /// <summary>
-        /// Get fields
-        /// </summary>
-        /// <param name="entityType">Entity type</param>
-        /// <param name="propertyNames">Property names</param>
-        /// <returns></returns>
-        List<EntityField> GetFields(Type entityType, IEnumerable<string> propertyNames)
-        {
-            return DataManager.GetFields(DatabaseServerType.MySQL, entityType, propertyNames);
-        }
-
-        /// <summary>
-        /// Format parameter name
-        /// </summary>
-        /// <param name="parameterName">Parameter name</param>
-        /// <param name="parameterSequence">Parameter sequence</param>
-        /// <returns></returns>
-        static string FormatParameterName(string parameterName, int parameterSequence)
-        {
-            return parameterName + parameterSequence;
-        }
-
-        /// <summary>
-        /// Parse parameter
-        /// </summary>
-        /// <param name="originalParameters">Original parameter</param>
-        /// <returns></returns>
-        CommandParameters ParseParameters(object originalParameters)
-        {
-            if (originalParameters == null)
-            {
-                return null;
-            }
-            CommandParameters parameters = originalParameters as CommandParameters;
-            if (parameters != null)
-            {
-                return parameters;
-            }
-            parameters = new CommandParameters();
-            if (originalParameters is IEnumerable<KeyValuePair<string, string>>)
-            {
-                var stringParametersDict = originalParameters as IEnumerable<KeyValuePair<string, string>>;
-                parameters.Add(stringParametersDict);
-            }
-            else if (originalParameters is IEnumerable<KeyValuePair<string, dynamic>>)
-            {
-                var dynamicParametersDict = originalParameters as IEnumerable<KeyValuePair<string, dynamic>>;
-                parameters.Add(dynamicParametersDict);
-            }
-            else if (originalParameters is IEnumerable<KeyValuePair<string, object>>)
-            {
-                var objectParametersDict = originalParameters as IEnumerable<KeyValuePair<string, object>>;
-                parameters.Add(objectParametersDict);
-            }
-            else if (originalParameters is IEnumerable<KeyValuePair<string, IModifyValue>>)
-            {
-                var modifyParametersDict = originalParameters as IEnumerable<KeyValuePair<string, IModifyValue>>;
-                parameters.Add(modifyParametersDict);
-            }
-            else
-            {
-                var objectParametersDict = originalParameters.ObjectToDcitionary();
-                parameters.Add(objectParametersDict);
-            }
-            return parameters;
-        }
-
-        /// <summary>
-        /// Convert cmd parameters
-        /// </summary>
-        /// <param name="commandParameters">Command parameters</param>
-        /// <returns></returns>
-        DynamicParameters ConvertCmdParameters(CommandParameters commandParameters)
-        {
-            if (commandParameters?.Parameters.IsNullOrEmpty() ?? true)
-            {
-                return null;
-            }
-            DynamicParameters dynamicParameters = new DynamicParameters();
-            foreach (var item in commandParameters.Parameters)
-            {
-                var parameter = item.Value;
-                dynamicParameters.Add(parameter.Name, parameter.Value
-                                    , parameter.DbType, parameter.ParameterDirection
-                                    , parameter.Size, parameter.Precision
-                                    , parameter.Scale);
-            }
-            return dynamicParameters;
-        }
-
-        /// <summary>
-        /// Get transaction isolation level
-        /// </summary>
-        /// <param name="dataIsolationLevel">Data isolation level</param>
-        /// <returns></returns>
-        IsolationLevel? GetTransactionIsolationLevel(DataIsolationLevel? dataIsolationLevel)
-        {
-            if (!dataIsolationLevel.HasValue)
-            {
-                dataIsolationLevel = DataManager.GetDataIsolationLevel(DatabaseServerType.MySQL);
-            }
-            return DataManager.GetSystemIsolationLevel(dataIsolationLevel);
-        }
-
-        /// <summary>
-        /// Get query transaction
-        /// </summary>
-        /// <param name="connection">Database connection</param>
-        /// <param name="query">Query object</param>
-        /// <returns></returns>
-        IDbTransaction GetQueryTransaction(IDbConnection connection, IQuery query)
-        {
-            DataIsolationLevel? dataIsolationLevel = query?.IsolationLevel;
-            if (!dataIsolationLevel.HasValue)
-            {
-                dataIsolationLevel = DataManager.GetDataIsolationLevel(DatabaseServerType.MySQL);
-            }
-            var systemIsolationLevel = GetTransactionIsolationLevel(dataIsolationLevel);
-            if (systemIsolationLevel.HasValue)
-            {
-                if (connection.State != ConnectionState.Open)
-                {
-                    connection.Open();
-                }
-                return connection.BeginTransaction(systemIsolationLevel.Value);
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// Get execute transaction
-        /// </summary>
-        /// <param name="connection">Database connection</param>
-        /// <param name="executeOption">Execute option</param>
-        /// <returns></returns>
-        IDbTransaction GetExecuteTransaction(IDbConnection connection, CommandExecuteOption executeOption)
-        {
-            DataIsolationLevel? dataIsolationLevel = executeOption?.IsolationLevel;
-            if (!dataIsolationLevel.HasValue)
-            {
-                dataIsolationLevel = DataManager.GetDataIsolationLevel(DatabaseServerType.MySQL);
-            }
-            var systemIsolationLevel = DataManager.GetSystemIsolationLevel(dataIsolationLevel);
-            if (connection.State != ConnectionState.Open)
-            {
-                connection.Open();
-            }
-            return systemIsolationLevel.HasValue ? connection.BeginTransaction(systemIsolationLevel.Value) : connection.BeginTransaction();
         }
 
         #endregion
