@@ -21,7 +21,7 @@
     </dependencies>
   </metadata>
   <files>
-    <file src="EZNEW.Data.MySQL\bin\$configuration$\netstandard2.0\EZNEW.Cache.Redis.dll" target="lib\netstandard2.0" />
-	<file src="EZNEW.Data.MySQL\bin\$configuration$\netstandard2.0\EZNEW.Cache.Redis.pdb" target="lib\netstandard2.0" />
+    <file src="EZNEW.Data.MySQL\bin\$configuration$\netstandard2.0\EZNEW.Data.MySQL.dll" target="lib\netstandard2.0" />
+	<file src="EZNEW.Data.MySQL\bin\$configuration$\netstandard2.0\EZNEW.Data.MySQL.pdb" target="lib\netstandard2.0" />
   </files>
 </package>
