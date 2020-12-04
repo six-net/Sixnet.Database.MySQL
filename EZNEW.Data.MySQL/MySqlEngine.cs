@@ -29,7 +29,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeOption">Execute option</param>
         /// <param name="commands">Commands</param>
         /// <returns>Return effected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecuteOption executeOption, IEnumerable<ICommand> commands)
+        public int Execute(DatabaseServer server, CommandExecuteOptions executeOption, IEnumerable<ICommand> commands)
         {
             return ExecuteAsync(server, executeOption, commands).Result;
         }
@@ -41,7 +41,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeOption">Execute option</param>
         /// <param name="commands">Commands</param>
         /// <returns>Return effected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecuteOption executeOption, params ICommand[] commands)
+        public int Execute(DatabaseServer server, CommandExecuteOptions executeOption, params ICommand[] commands)
         {
             return ExecuteAsync(server, executeOption, commands).Result;
         }
@@ -53,7 +53,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeOption">Execute option</param>
         /// <param name="commands">Commands</param>
         /// <returns>Return effected data numbers</returns>
-        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecuteOption executeOption, IEnumerable<ICommand> commands)
+        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecuteOptions executeOption, IEnumerable<ICommand> commands)
         {
             #region group execute commands
 
@@ -134,7 +134,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeOption">Execute option</param>
         /// <param name="commands">Commands</param>
         /// <returns>Return effected data numbers</returns>
-        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecuteOption executeOption, params ICommand[] commands)
+        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecuteOptions executeOption, params ICommand[] commands)
         {
             IEnumerable<ICommand> cmdCollection = commands;
             return await ExecuteAsync(server, executeOption, cmdCollection).ConfigureAwait(false);
@@ -147,7 +147,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeCommands">Execute commands</param>
         /// <param name="useTransaction">Use transaction</param>
         /// <returns>Return effected data numbers</returns>
-        async Task<int> ExecuteCommandAsync(DatabaseServer server, CommandExecuteOption executeOption, IEnumerable<DatabaseExecuteCommand> executeCommands, bool useTransaction)
+        async Task<int> ExecuteCommandAsync(DatabaseServer server, CommandExecuteOptions executeOption, IEnumerable<DatabaseExecuteCommand> executeCommands, bool useTransaction)
         {
             int resultValue = 0;
             bool success = true;
@@ -252,7 +252,7 @@ namespace EZNEW.Data.MySQL
             {
                 return null;
             }
-            string cmdText = $"INSERT INTO `{objectName}` ({string.Join(",", insertFormatResult.Item1)}) VALUES ({string.Join(",", insertFormatResult.Item2)});";
+            string cmdText = $"INSERT INTO {MySqlFactory.WrapKeyword(objectName)} ({string.Join(",", insertFormatResult.Item1)}) VALUES ({string.Join(",", insertFormatResult.Item2)});";
             CommandParameters parameters = insertFormatResult.Item3;
             translator.ParameterSequence += fieldCount;
             return new DatabaseExecuteCommand()
@@ -310,7 +310,7 @@ namespace EZNEW.Data.MySQL
                         {
                             var calculateModifyValue = parameterValue as CalculateModifyValue;
                             string calChar = MySqlFactory.GetCalculateChar(calculateModifyValue.Operator);
-                            newValueExpression = $"{translator.ObjectPetName}.`{field.FieldName}`{calChar}{MySqlFactory.ParameterPrefix}{parameterName}";
+                            newValueExpression = $"{translator.ObjectPetName}.{MySqlFactory.WrapKeyword(field.FieldName)}{calChar}{MySqlFactory.ParameterPrefix}{parameterName}";
                         }
                     }
                 }
@@ -318,9 +318,9 @@ namespace EZNEW.Data.MySQL
                 {
                     newValueExpression = $"{MySqlFactory.ParameterPrefix}{parameterName}";
                 }
-                updateSetArray.Add($"{translator.ObjectPetName}.`{field.FieldName}`={newValueExpression}");
+                updateSetArray.Add($"{translator.ObjectPetName}.{MySqlFactory.WrapKeyword(field.FieldName)}={newValueExpression}");
             }
-            string cmdText = $"{preScript}UPDATE `{objectName}` AS {translator.ObjectPetName} {joinScript} SET {string.Join(",", updateSetArray)} {conditionString};";
+            string cmdText = $"{preScript}UPDATE {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} SET {string.Join(",", updateSetArray)} {conditionString};";
             translator.ParameterSequence = parameterSequence;
 
             #endregion
@@ -366,7 +366,7 @@ namespace EZNEW.Data.MySQL
             #region script
 
             string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-            string cmdText = $"{preScript}DELETE {translator.ObjectPetName} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {conditionString};";
+            string cmdText = $"{preScript}DELETE {translator.ObjectPetName} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString};";
 
             #endregion
 
@@ -443,12 +443,12 @@ namespace EZNEW.Data.MySQL
                     string outputFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
                     if (string.IsNullOrWhiteSpace(tranResult.CombineScript))
                     {
-                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
                     }
                     else
                     {
                         string innerFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
-                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM (SELECT {innerFormatedField} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM (SELECT {innerFormatedField} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
                     }
                     break;
             }
@@ -558,8 +558,8 @@ namespace EZNEW.Data.MySQL
                     var queryFields = MySqlFactory.GetQueryFields(command.Query, command.EntityType, true);
                     string innerFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
                     string outputFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
-                    string queryScript = $"SELECT {innerFormatedField} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}";
-                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {MySqlFactory.PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{MySqlFactory.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({defaultFieldName}) FROM {MySqlFactory.PagingTableName}) AS QueryDataTotalCount,{outputFormatedField} FROM {MySqlFactory.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? $"{translator.ObjectPetName}.`{defaultFieldName}` DESC" : $"{tranResult.OrderString}")} {limitString}";
+                    string queryScript = $"SELECT {innerFormatedField} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}";
+                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {MySqlFactory.PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{MySqlFactory.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({MySqlFactory.WrapKeyword(defaultFieldName)}) FROM {MySqlFactory.PagingTableName}) AS QueryDataTotalCount,{outputFormatedField} FROM {MySqlFactory.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? $"{translator.ObjectPetName}.{MySqlFactory.WrapKeyword(defaultFieldName)} DESC" : $"{tranResult.OrderString}")} {limitString}";
                     break;
             }
 
@@ -622,7 +622,7 @@ namespace EZNEW.Data.MySQL
             #region script
 
             string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-            string cmdText = $"{preScript}SELECT EXISTS(SELECT {string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {conditionString} {tranResult.CombineScript})";
+            string cmdText = $"{preScript}SELECT EXISTS(SELECT {string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString} {tranResult.CombineScript})";
 
             #endregion
 
@@ -735,8 +735,8 @@ namespace EZNEW.Data.MySQL
                 default:
                     string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
                     cmdText = string.IsNullOrWhiteSpace(tranResult.CombineScript)
-                        ? $"{tranResult.PreScript}SELECT {funcName}({MySqlFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")}"
-                        : $"{tranResult.PreScript}SELECT {funcName}({MySqlFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM `{objectName}` AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName}";
+                        ? $"{tranResult.PreScript}SELECT {funcName}({MySqlFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")}"
+                        : $"{tranResult.PreScript}SELECT {funcName}({MySqlFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName}";
                     break;
             }
 

@@ -33,7 +33,6 @@ namespace EZNEW.Data.MySQL
         const string DescKeyWord = "DESC";
         const string AscKeyWord = "ASC";
         public const string ObjPetName = "TB";
-        const string parameterPrefix = "?";
         const string TreeTableName = "RecurveTable";
         const string TreeTablePetName = "RTT";
         static readonly Dictionary<JoinType, string> joinOperatorDict = new Dictionary<JoinType, string>()
@@ -182,7 +181,7 @@ namespace EZNEW.Data.MySQL
                                 string combineObjectName = DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, combine.CombineQuery);
                                 var combineQueryResult = ExecuteTranslate(combine.CombineQuery, parameters, combineObjectPetName, true, true);
                                 string combineConditionString = string.IsNullOrWhiteSpace(combineQueryResult.ConditionString) ? string.Empty : $"WHERE {combineQueryResult.ConditionString}";
-                                combineBuilder.Append($" {GetCombineOperator(combine.CombineType)} SELECT {string.Join(",", MySqlFactory.FormatQueryFields(combineObjectPetName, query, query.GetEntityType(), true, false))} FROM `{combineObjectName}` AS {combineObjectPetName} {(combineQueryResult.AllowJoin ? combineQueryResult.JoinScript : string.Empty)} {combineConditionString}");
+                                combineBuilder.Append($" {GetCombineOperator(combine.CombineType)} SELECT {string.Join(",", MySqlFactory.FormatQueryFields(combineObjectPetName, query, query.GetEntityType(), true, false))} FROM {MySqlFactory.WrapKeyword(combineObjectName)} AS {combineObjectPetName} {(combineQueryResult.AllowJoin ? combineQueryResult.JoinScript : string.Empty)} {combineConditionString}");
                                 if (!combineQueryResult.WithScripts.IsNullOrEmpty())
                                 {
                                     withScripts.AddRange(combineQueryResult.WithScripts);
@@ -234,7 +233,7 @@ namespace EZNEW.Data.MySQL
                             {
                                 conditionBuilder.Append($"{(conditionBuilder.Length == 0 ? string.Empty : " AND ")}{joinQueryResult.JoinExtraConditionString}");
                             }
-                            joinBuilder.Append($" {GetJoinOperator(joinItem.JoinType)} `{DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, joinItem.JoinQuery)}` AS {joinObjName}{joinConnection}");
+                            joinBuilder.Append($" {GetJoinOperator(joinItem.JoinType)} {MySqlFactory.WrapKeyword(DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, joinItem.JoinQuery))} AS {joinObjName}{joinConnection}");
                             if (joinItem.ExtraQuery != null)
                             {
                                 var extraQueryResult = ExecuteTranslate(joinItem.ExtraQuery, parameters, joinObjName, true, true);
@@ -252,7 +251,7 @@ namespace EZNEW.Data.MySQL
                         {
                             var combineJoinObjName = GetNewSubObjectPetName();
                             var joinConnection = GetJoinCondition(query, joinItem, objectName, combineJoinObjName);
-                            joinBuilder.Append($" {GetJoinOperator(joinItem.JoinType)} (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(joinObjName, joinItem.JoinQuery, joinItem.JoinQuery.GetEntityType(), false, false))} FROM `{DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, joinItem.JoinQuery)}` AS {joinObjName} {(joinQueryResult.AllowJoin ? joinQueryResult.JoinScript : string.Empty)} {(string.IsNullOrWhiteSpace(joinQueryResult.ConditionString) ? string.Empty : "WHERE " + joinQueryResult.ConditionString)} {joinQueryResult.CombineScript}) AS {combineJoinObjName}{joinConnection}");
+                            joinBuilder.Append($" {GetJoinOperator(joinItem.JoinType)} (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(joinObjName, joinItem.JoinQuery, joinItem.JoinQuery.GetEntityType(), false, false))} FROM {MySqlFactory.WrapKeyword(DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, joinItem.JoinQuery))} AS {joinObjName} {(joinQueryResult.AllowJoin ? joinQueryResult.JoinScript : string.Empty)} {(string.IsNullOrWhiteSpace(joinQueryResult.ConditionString) ? string.Empty : "WHERE " + joinQueryResult.ConditionString)} {joinQueryResult.CombineScript}) AS {combineJoinObjName}{joinConnection}");
                         }
                         if (!joinQueryResult.WithScripts.IsNullOrEmpty())
                         {
@@ -284,12 +283,12 @@ namespace EZNEW.Data.MySQL
                     var recurveTable = GetNewRecurveTableName();
                     recurveTablePetName = recurveTable.Item1;
                     recurveTableName = recurveTable.Item2;
-                    conditionString = $"{objectName}.`{recurveField.FieldName}` IN (SELECT {recurveTablePetName}.`{recurveField.FieldName}` FROM `{recurveTableName}` AS {recurveTablePetName})";
+                    conditionString = $"{objectName}.{MySqlFactory.WrapKeyword(recurveField.FieldName)} IN (SELECT {recurveTablePetName}.{MySqlFactory.WrapKeyword(recurveField.FieldName)} FROM {MySqlFactory.WrapKeyword(recurveTableName)} AS {recurveTablePetName})";
                     string queryObjectName = DataManager.GetQueryRelationObjectName(DatabaseServerType.MySQL, query);
                     string withScript =
-                    $"{recurveTableName} AS (SELECT {objectName}.`{recurveField.FieldName}`,{objectName}.`{recurveRelationField.FieldName}` FROM `{queryObjectName}` AS {objectName} {joinScript} {(string.IsNullOrWhiteSpace(nowConditionString) ? string.Empty : $"WHERE {nowConditionString}")} " +
-                    $"UNION ALL SELECT {objectName}.`{recurveField.FieldName}`,{objectName}.`{recurveRelationField.FieldName}` FROM `{queryObjectName}` AS {objectName} JOIN {recurveTableName} AS {recurveTablePetName} " +
-                    $"ON {(query.RecurveCriteria.Direction == RecurveDirection.Up ? $"{objectName}.`{recurveField.FieldName}`={recurveTablePetName}.`{recurveRelationField.FieldName}`" : $"{objectName}.`{recurveRelationField.FieldName}`={recurveTablePetName}.`{recurveField.FieldName}`")})";
+                    $"{recurveTableName} AS (SELECT {objectName}.{MySqlFactory.WrapKeyword(recurveField.FieldName)},{objectName}.{MySqlFactory.WrapKeyword(recurveRelationField.FieldName)} FROM {MySqlFactory.WrapKeyword(queryObjectName)} AS {objectName} {joinScript} {(string.IsNullOrWhiteSpace(nowConditionString) ? string.Empty : $"WHERE {nowConditionString}")} " +
+                    $"UNION ALL SELECT {objectName}.{MySqlFactory.WrapKeyword(recurveField.FieldName)},{objectName}.{MySqlFactory.WrapKeyword(recurveRelationField.FieldName)} FROM {MySqlFactory.WrapKeyword(queryObjectName)} AS {objectName} JOIN {recurveTableName} AS {recurveTablePetName} " +
+                    $"ON {(query.RecurveCriteria.Direction == RecurveDirection.Up ? $"{objectName}.{MySqlFactory.WrapKeyword(recurveField.FieldName)}={recurveTablePetName}.{MySqlFactory.WrapKeyword(recurveRelationField.FieldName)}" : $"{objectName}.{MySqlFactory.WrapKeyword(recurveRelationField.FieldName)}={recurveTablePetName}.{MySqlFactory.WrapKeyword(recurveField.FieldName)}")})";
                     withScripts.Add(withScript);
                 }
                 var result = TranslateResult.CreateNewResult(conditionString, orderBuilder.ToString().Trim(','), parameters);
@@ -408,14 +407,14 @@ namespace EZNEW.Data.MySQL
                 if (subqueryLimitResult.Item1)
                 {
                     valueQueryCondition = string.IsNullOrWhiteSpace(subQueryResult.CombineScript)
-                        ? $"{criteriaFieldName} {sqlOperator} (SELECT `{valueQueryField.FieldName}` FROM (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString}) AS S{subObjName})"
-                        : $"{criteriaFieldName} {sqlOperator} (SELECT `{valueQueryField.FieldName}` FROM (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(subObjName, valueQuery, valueQuery.GetEntityType(), true, false))} FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.CombineScript}) AS {subObjName} {orderString} {topString}) AS S{subObjName})";
+                        ? $"{criteriaFieldName} {sqlOperator} (SELECT {MySqlFactory.WrapKeyword(valueQueryField.FieldName)} FROM (SELECT {subObjName}.{MySqlFactory.WrapKeyword(valueQueryField.FieldName)} FROM {MySqlFactory.WrapKeyword(valueQueryObjectName)} AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString}) AS S{subObjName})"
+                        : $"{criteriaFieldName} {sqlOperator} (SELECT {MySqlFactory.WrapKeyword(valueQueryField.FieldName)} FROM (SELECT {subObjName}.{MySqlFactory.WrapKeyword(valueQueryField.FieldName)} FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(subObjName, valueQuery, valueQuery.GetEntityType(), true, false))} FROM {MySqlFactory.WrapKeyword(valueQueryObjectName)} AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.CombineScript}) AS {subObjName} {orderString} {topString}) AS S{subObjName})";
                 }
                 else
                 {
                     valueQueryCondition = string.IsNullOrWhiteSpace(subQueryResult.CombineScript)
-                        ? $"{criteriaFieldName} {sqlOperator} (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString})"
-                        : $"{criteriaFieldName} {sqlOperator} (SELECT {subObjName}.`{valueQueryField.FieldName}` FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(subObjName, valueQuery, valueQuery.GetEntityType(), true, false))} FROM `{valueQueryObjectName}` AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.CombineScript}) AS {subObjName} {orderString} {topString})";
+                        ? $"{criteriaFieldName} {sqlOperator} (SELECT {subObjName}.{MySqlFactory.WrapKeyword(valueQueryField.FieldName)} FROM {MySqlFactory.WrapKeyword(valueQueryObjectName)} AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString})"
+                        : $"{criteriaFieldName} {sqlOperator} (SELECT {subObjName}.{MySqlFactory.WrapKeyword(valueQueryField.FieldName)} FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(subObjName, valueQuery, valueQuery.GetEntityType(), true, false))} FROM {MySqlFactory.WrapKeyword(valueQueryObjectName)} AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.CombineScript}) AS {subObjName} {orderString} {topString})";
                 }
                 var valueQueryResult = TranslateResult.CreateNewResult(valueQueryCondition);
                 if (!subQueryResult.WithScripts.IsNullOrEmpty())
@@ -427,7 +426,7 @@ namespace EZNEW.Data.MySQL
                 return valueQueryResult;
             }
             parameters.Add(parameterName, FormatCriteriaValue(criteria.Operator, criteria.GetCriteriaRealValue()));
-            var criteriaCondition = $"{criteriaFieldName} {sqlOperator} {parameterPrefix}{parameterName}";
+            var criteriaCondition = $"{criteriaFieldName} {sqlOperator} {MySqlFactory.ParameterPrefix}{parameterName}";
             return TranslateResult.CreateNewResult(criteriaCondition);
         }
 
@@ -565,7 +564,7 @@ namespace EZNEW.Data.MySQL
             fieldName = field.FieldName;
             if (convert == null)
             {
-                return $"{objectName}.`{fieldName}`";
+                return $"{objectName}.{MySqlFactory.WrapKeyword(fieldName)}";
             }
             return MySqlFactory.ParseCriteriaConverter(convert, objectName, fieldName);
         }
@@ -650,7 +649,7 @@ namespace EZNEW.Data.MySQL
                 }
                 var sourceField = DataManager.GetField(DatabaseServerType.MySQL, sourceEntityType, joinField.Key);
                 var targetField = DataManager.GetField(DatabaseServerType.MySQL, targetEntityType, joinField.Value);
-                joinList.Add($" {sourceObjShortName}.`{(useValueAsSource ? targetField.FieldName : sourceField.FieldName)}`{GetJoinOperator(joinItem.Operator)}{targetObjShortName}.`{(useValueAsSource ? sourceField.FieldName : targetField.FieldName)}`");
+                joinList.Add($" {sourceObjShortName}.{MySqlFactory.WrapKeyword(useValueAsSource ? targetField.FieldName : sourceField.FieldName)}{GetJoinOperator(joinItem.Operator)}{targetObjShortName}.{MySqlFactory.WrapKeyword(useValueAsSource ? sourceField.FieldName : targetField.FieldName)}");
             }
             return joinList.IsNullOrEmpty() ? string.Empty : " ON" + string.Join(" AND", joinList);
         }

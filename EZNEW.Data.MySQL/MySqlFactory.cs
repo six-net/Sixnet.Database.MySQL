@@ -15,6 +15,7 @@ using EZNEW.Develop.Entity;
 using EZNEW.Develop.Command.Modify;
 using EZNEW.Dapper;
 using EZNEW.Develop.DataAccess;
+using EZNEW.Diagnostics;
 
 namespace EZNEW.Data.MySQL
 {
@@ -27,14 +28,27 @@ namespace EZNEW.Data.MySQL
         /// Field format key
         /// </summary>
         internal static readonly string FieldFormatKey = ((int)DatabaseServerType.MySQL).ToString();
+
         /// <summary>
         /// Parameter prefix
         /// </summary>
         internal const string ParameterPrefix = "?";
+
+        /// <summary>
+        /// Key word prefix
+        /// </summary>
+        internal const string KeywordPrefix = "`";
+
+        /// <summary>
+        /// Key word suffix
+        /// </summary>
+        internal const string KeywordSuffix = "`";
+
         /// <summary>
         /// Paging table name
         /// </summary>
         internal const string PagingTableName = "EZNEW_TEMTABLE_PAGING";
+
         /// <summary>
         /// Calculate operators
         /// </summary>
@@ -45,6 +59,7 @@ namespace EZNEW.Data.MySQL
             [CalculateOperator.Multiply] = "*",
             [CalculateOperator.Divide] = "/",
         };
+
         /// <summary>
         /// Aggregate functions
         /// </summary>
@@ -60,7 +75,7 @@ namespace EZNEW.Data.MySQL
         /// <summary>
         /// Enable trace log
         /// </summary>
-        static readonly bool EnableTraceLog = false;
+        static bool EnableTraceLog = false;
 
         /// <summary>
         /// Trace log split
@@ -69,7 +84,10 @@ namespace EZNEW.Data.MySQL
 
         static MySqlFactory()
         {
-            EnableTraceLog = TraceLogSwitchManager.ShouldTraceFramework();
+            EnableTraceLog = SwitchManager.ShouldTraceFramework(sw =>
+            {
+                EnableTraceLog = SwitchManager.ShouldTraceFramework();
+            });
         }
 
         #region Get database connection
@@ -112,7 +130,7 @@ namespace EZNEW.Data.MySQL
         internal static string ParseCriteriaConverter(ICriteriaConverter converter, string objectName, string fieldName)
         {
             var criteriaConverterParse = DataManager.GetCriteriaConverterParser(converter?.Name) ?? Parse;
-            return criteriaConverterParse(new CriteriaConverterParseOption()
+            return criteriaConverterParse(new CriteriaConverterParseOptions()
             {
                 CriteriaConverter = converter,
                 ServerType = DatabaseServerType.MySQL,
@@ -126,7 +144,7 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="option">parse option</param>
         /// <returns></returns>
-        static string Parse(CriteriaConverterParseOption option)
+        static string Parse(CriteriaConverterParseOptions option)
         {
             if (string.IsNullOrWhiteSpace(option?.CriteriaConverter?.Name))
             {
@@ -136,7 +154,7 @@ namespace EZNEW.Data.MySQL
             switch (option.CriteriaConverter.Name)
             {
                 case CriteriaConverterNames.StringLength:
-                    format = $"CHAR_LENGTH({option.ObjectName}.`{option.FieldName}`)";
+                    format = $"CHAR_LENGTH({option.ObjectName}.{WrapKeyword(option.FieldName)})";
                     break;
             }
             if (string.IsNullOrWhiteSpace(format))
@@ -268,7 +286,7 @@ namespace EZNEW.Data.MySQL
             CommandParameters cmdParameters = ParseParameters(parameters);
             foreach (var field in fields)
             {
-                formatFields.Add(string.Format("`{0}`", field.FieldName));
+                formatFields.Add(WrapKeyword(field.FieldName));
 
                 //parameter name
                 parameterSequence++;
@@ -328,16 +346,30 @@ namespace EZNEW.Data.MySQL
             {
                 return string.Empty;
             }
-            var formatValue = $"{dataBaseObjectName}.{field.FieldName}";
+            var formatValue = $"{dataBaseObjectName}.{WrapKeyword(field.FieldName)}";
             if (!string.IsNullOrWhiteSpace(field.QueryFormat))
             {
-                formatValue = string.Format(field.QueryFormat + " AS `{1}`", formatValue, field.PropertyName);
+                formatValue = string.Format(field.QueryFormat + " AS {1}", formatValue, WrapKeyword(field.PropertyName));
             }
             else if (field.FieldName != field.PropertyName && convertField)
             {
-                formatValue = $"{formatValue} AS `{field.PropertyName}`";
+                formatValue = $"{formatValue} AS {WrapKeyword(field.PropertyName)}";
             }
             return formatValue;
+        }
+
+        #endregion
+
+        #region Wrap keyword
+
+        /// <summary>
+        /// Wrap keyword by the KeywordPrefix and the KeywordSuffix
+        /// </summary>
+        /// <param name="originalValue">Original value</param>
+        /// <returns></returns>
+        internal static string WrapKeyword(string originalValue)
+        {
+            return $"{KeywordPrefix}{originalValue}{KeywordSuffix}";
         }
 
         #endregion
@@ -528,7 +560,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="connection">Database connection</param>
         /// <param name="executeOption">Execute option</param>
         /// <returns></returns>
-        public static IDbTransaction GetExecuteTransaction(IDbConnection connection, CommandExecuteOption executeOption)
+        public static IDbTransaction GetExecuteTransaction(IDbConnection connection, CommandExecuteOptions executeOption)
         {
             DataIsolationLevel? dataIsolationLevel = executeOption?.IsolationLevel;
             if (!dataIsolationLevel.HasValue)
