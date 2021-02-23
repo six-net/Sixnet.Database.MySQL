@@ -200,7 +200,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="parameters">Parameters</param>
         static void LogScriptCore(string script, string parameters)
         {
-            LogManager.LogInformation<MySqlEngine>(TraceLogSplit +
+            LogManager.LogInformation<MySqlProvider>(TraceLogSplit +
             $"{Environment.NewLine}{Environment.NewLine}{script}" +
             $"{Environment.NewLine}{Environment.NewLine}{parameters}" +
             $"{Environment.NewLine}{Environment.NewLine}");

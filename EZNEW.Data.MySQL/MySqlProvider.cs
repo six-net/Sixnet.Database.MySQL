@@ -12,13 +12,17 @@ using EZNEW.Develop.Command;
 using EZNEW.Develop.Command.Modify;
 using EZNEW.Fault;
 using EZNEW.Data.Configuration;
+using MySql.Data.MySqlClient;
+using System.Globalization;
+using System.IO;
+using EZNEW.Application;
 
 namespace EZNEW.Data.MySQL
 {
     /// <summary>
-    /// Imeplements database engine for mysql
+    /// Imeplements database provider for mysql
     /// </summary>
-    public class MySqlEngine : IDatabaseEngine
+    public class MySqlProvider : IDatabaseProvider
     {
         #region Execute
 
@@ -26,33 +30,33 @@ namespace EZNEW.Data.MySQL
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute option</param>
+        /// <param name="executeOptions">Execute options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return effected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecuteOptions executeOption, IEnumerable<ICommand> commands)
+        /// <returns>Return the affected data numbers</returns>
+        public int Execute(DatabaseServer server, CommandExecuteOptions executeOptions, IEnumerable<ICommand> commands)
         {
-            return ExecuteAsync(server, executeOption, commands).Result;
+            return ExecuteAsync(server, executeOptions, commands).Result;
         }
 
         /// <summary>
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute option</param>
+        /// <param name="executeOptions">Execute options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return effected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecuteOptions executeOption, params ICommand[] commands)
+        /// <returns>Return the affected data numbers</returns>
+        public int Execute(DatabaseServer server, CommandExecuteOptions executeOptions, params ICommand[] commands)
         {
-            return ExecuteAsync(server, executeOption, commands).Result;
+            return ExecuteAsync(server, executeOptions, commands).Result;
         }
 
         /// <summary>
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute option</param>
+        /// <param name="executeOption">Execute options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return effected data numbers</returns>
+        /// <returns>Return the affected data numbers</returns>
         public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecuteOptions executeOption, IEnumerable<ICommand> commands)
         {
             #region group execute commands
@@ -131,9 +135,9 @@ namespace EZNEW.Data.MySQL
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute option</param>
+        /// <param name="executeOption">Execute options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return effected data numbers</returns>
+        /// <returns>Return the affected data numbers</returns>
         public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecuteOptions executeOption, params ICommand[] commands)
         {
             IEnumerable<ICommand> cmdCollection = commands;
@@ -146,7 +150,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="server">Database server</param>
         /// <param name="executeCommands">Execute commands</param>
         /// <param name="useTransaction">Use transaction</param>
-        /// <returns>Return effected data numbers</returns>
+        /// <returns>Return the affected data numbers</returns>
         async Task<int> ExecuteCommandAsync(DatabaseServer server, CommandExecuteOptions executeOption, IEnumerable<DatabaseExecuteCommand> executeCommands, bool useTransaction)
         {
             int resultValue = 0;
@@ -199,7 +203,7 @@ namespace EZNEW.Data.MySQL
         /// Get execute database execute command
         /// </summary>
         /// <param name="command">Command</param>
-        /// <returns>Return execute command</returns>
+        /// <returns>Return a database execute command</returns>
         DatabaseExecuteCommand GetExecuteDbCommand(IQueryTranslator queryTranslator, RdbCommand command)
         {
             DatabaseExecuteCommand GetTextCommand()
@@ -241,7 +245,7 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="translator">Translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return insert execute command</returns>
+        /// <returns>Return an insert execute command</returns>
         DatabaseExecuteCommand GetInsertExecuteDbCommand(IQueryTranslator translator, RdbCommand command)
         {
             string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
@@ -269,7 +273,7 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="translator">Translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return update execute command</returns>
+        /// <returns>Return an update execute command</returns>
         DatabaseExecuteCommand GetUpdateExecuteDbCommand(IQueryTranslator translator, RdbCommand command)
         {
             #region query translate
@@ -347,7 +351,7 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="translator">Translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return delete execute command</returns>
+        /// <returns>Return a delete execute command</returns>
         DatabaseExecuteCommand GetDeleteExecuteDbCommand(IQueryTranslator translator, RdbCommand command)
         {
             #region query translate
@@ -398,7 +402,7 @@ namespace EZNEW.Data.MySQL
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return datas</returns>
+        /// <returns>Return the datas</returns>
         public IEnumerable<T> Query<T>(DatabaseServer server, ICommand command)
         {
             return QueryAsync<T>(server, command).Result;
@@ -410,7 +414,7 @@ namespace EZNEW.Data.MySQL
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return datas</returns>
+        /// <returns>Return the datas</returns>
         public async Task<IEnumerable<T>> QueryAsync<T>(DatabaseServer server, ICommand command)
         {
             if (command.Query == null)
@@ -512,7 +516,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="command">Command</param>
         /// <param name="offsetNum">Offset num</param>
         /// <param name="size">Query size</param>
-        /// <returns>Return datas</returns>
+        /// <returns>Return the datas</returns>
         public IEnumerable<T> QueryOffset<T>(DatabaseServer server, ICommand command, int offsetNum = 0, int size = int.MaxValue)
         {
             return QueryOffsetAsync<T>(server, command, offsetNum, size).Result;
@@ -526,7 +530,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="command">Command</param>
         /// <param name="offsetNum">Offset num</param>
         /// <param name="size">Query size</param>
-        /// <returns>Return datas</returns>
+        /// <returns>Return the datas</returns>
         public async Task<IEnumerable<T>> QueryOffsetAsync<T>(DatabaseServer server, ICommand command, int offsetNum = 0, int size = int.MaxValue)
         {
             if (command.Query == null)
@@ -583,22 +587,22 @@ namespace EZNEW.Data.MySQL
         }
 
         /// <summary>
-        /// Determine whether data has existed
+        /// Query whether the data exists or not
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return whether data has existed</returns>
+        /// <returns>Return whether the data exists or not</returns>
         public bool Query(DatabaseServer server, ICommand command)
         {
             return QueryAsync(server, command).Result;
         }
 
         /// <summary>
-        /// Determine whether data has existed
+        /// Query whether the data exists or not
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return whether data has existed</returns>
+        /// <returns>Return whether the data exists or not</returns>
         public async Task<bool> QueryAsync(DatabaseServer server, ICommand command)
         {
             var translator = MySqlFactory.GetQueryTranslator(server);
@@ -650,7 +654,7 @@ namespace EZNEW.Data.MySQL
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return data</returns>
+        /// <returns>Return the data</returns>
         public T AggregateValue<T>(DatabaseServer server, ICommand command)
         {
             return AggregateValueAsync<T>(server, command).Result;
@@ -662,7 +666,7 @@ namespace EZNEW.Data.MySQL
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return data</returns>
+        /// <returns>Return the data</returns>
         public async Task<T> AggregateValueAsync<T>(DatabaseServer server, ICommand command)
         {
             if (command.Query == null)
@@ -764,7 +768,7 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return data set</returns>
+        /// <returns>Return the datadset</returns>
         public async Task<DataSet> QueryMultipleAsync(DatabaseServer server, ICommand command)
         {
             //Trace log
@@ -784,6 +788,111 @@ namespace EZNEW.Data.MySQL
                         dataSet.Tables.Add(dataTable);
                     }
                     return dataSet;
+                }
+            }
+        }
+
+        #endregion
+
+        #region Bulk
+
+        /// <summary>
+        /// Bulk insert datas
+        /// </summary>
+        /// <param name="server">Database server</param>
+        /// <param name="dataTable">Data table</param>
+        /// <param name="bulkInsertOptions">Insert options</param>
+        public void BulkInsert(DatabaseServer server, DataTable dataTable, IBulkInsertOptions bulkInsertOptions = null)
+        {
+            BulkInsertAsync(server, dataTable).Wait();
+        }
+
+        /// <summary>
+        /// Bulk insert datas
+        /// </summary>
+        /// <param name="server">Database server</param>
+        /// <param name="dataTable">Data table</param>
+        /// <param name="bulkInsertOptions">Insert options</param>
+        public async Task BulkInsertAsync(DatabaseServer server, DataTable dataTable, IBulkInsertOptions bulkInsertOptions = null)
+        {
+            if (server == null)
+            {
+                throw new ArgumentNullException(nameof(server));
+            }
+            if (dataTable == null)
+            {
+                throw new ArgumentNullException(nameof(dataTable));
+            }
+            var dataFilePath = dataTable.WriteToCSVFile("temp", ignoreTitle: true);
+            if (string.IsNullOrWhiteSpace(dataFilePath))
+            {
+                throw new EZNEWException("Failed to generate temporary data file");
+            }
+            using (MySqlConnection conn = new MySqlConnection(server?.ConnectionString))
+            {
+                try
+                {
+                    dataFilePath = Path.Combine(ApplicationManager.ApplicationExecutableDirectory, dataFilePath);
+                    MySqlBulkLoader loader = new MySqlBulkLoader(conn)
+                    {
+                        Local = true,
+                        TableName = dataTable.TableName,
+                        FieldTerminator = CultureInfo.CurrentCulture.TextInfo.ListSeparator,
+                        LineTerminator = Environment.NewLine,
+                        FileName = dataFilePath,
+                        NumberOfLinesToSkip = 0
+                    };
+                    if (bulkInsertOptions is MySqlBulkInsertOptions mySqlBulkInsertOptions && mySqlBulkInsertOptions != null)
+                    {
+                        loader.Priority = mySqlBulkInsertOptions.Priority;
+                        loader.ConflictOption = mySqlBulkInsertOptions.ConflictOption;
+                        loader.EscapeCharacter = mySqlBulkInsertOptions.EscapeCharacter;
+                        loader.FieldQuotationOptional = mySqlBulkInsertOptions.FieldQuotationOptional;
+                        loader.FieldQuotationCharacter = mySqlBulkInsertOptions.FieldQuotationCharacter;
+                        loader.LineTerminator = mySqlBulkInsertOptions.LineTerminator;
+                        loader.FieldTerminator = mySqlBulkInsertOptions.FieldTerminator;
+                        if (!string.IsNullOrWhiteSpace(mySqlBulkInsertOptions.LinePrefix))
+                        {
+                            loader.LinePrefix = mySqlBulkInsertOptions.LinePrefix;
+                        }
+                        if (mySqlBulkInsertOptions.NumberOfLinesToSkip >= 0)
+                        {
+                            loader.NumberOfLinesToSkip = mySqlBulkInsertOptions.NumberOfLinesToSkip;
+                        }
+                        if (mySqlBulkInsertOptions.Columns.IsNullOrEmpty())
+                        {
+                            loader.Columns.AddRange(mySqlBulkInsertOptions.Columns);
+                        }
+                        if (mySqlBulkInsertOptions.Timeout > 0)
+                        {
+                            loader.Timeout = mySqlBulkInsertOptions.Timeout;
+                        }
+                        if (!string.IsNullOrWhiteSpace(mySqlBulkInsertOptions.CharacterSet))
+                        {
+                            loader.CharacterSet = mySqlBulkInsertOptions.CharacterSet;
+                        }
+                    }
+                    if (loader.Columns.IsNullOrEmpty())
+                    {
+                        loader.Columns.AddRange(dataTable.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
+                    }
+                    conn.Open();
+                    await loader.LoadAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    throw ex;
+                }
+                finally
+                {
+                    if (conn != null && conn.State != ConnectionState.Closed)
+                    {
+                        conn.Close();
+                    }
+                    if (File.Exists(dataFilePath))
+                    {
+                        File.Delete(dataFilePath);
+                    }
                 }
             }
         }
