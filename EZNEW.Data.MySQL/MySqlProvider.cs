@@ -5,12 +5,12 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using EZNEW.Dapper;
-using EZNEW.Develop.Entity;
-using EZNEW.Develop.CQuery;
-using EZNEW.Develop.CQuery.Translator;
-using EZNEW.Develop.Command;
-using EZNEW.Develop.Command.Modify;
-using EZNEW.Fault;
+using EZNEW.Development.Entity;
+using EZNEW.Development.Query;
+using EZNEW.Development.Query.Translator;
+using EZNEW.Development.Command;
+using EZNEW.Development.Command.Modification;
+using EZNEW.Exceptions;
 using EZNEW.Data.Configuration;
 using MySql.Data.MySqlClient;
 using System.Globalization;
@@ -33,7 +33,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeOptions">Execute options</param>
         /// <param name="commands">Commands</param>
         /// <returns>Return the affected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecuteOptions executeOptions, IEnumerable<ICommand> commands)
+        public int Execute(DatabaseServer server, CommandExecutionOptions executeOptions, IEnumerable<ICommand> commands)
         {
             return ExecuteAsync(server, executeOptions, commands).Result;
         }
@@ -45,7 +45,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeOptions">Execute options</param>
         /// <param name="commands">Commands</param>
         /// <returns>Return the affected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecuteOptions executeOptions, params ICommand[] commands)
+        public int Execute(DatabaseServer server, CommandExecutionOptions executeOptions, params ICommand[] commands)
         {
             return ExecuteAsync(server, executeOptions, commands).Result;
         }
@@ -57,12 +57,12 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeOption">Execute options</param>
         /// <param name="commands">Commands</param>
         /// <returns>Return the affected data numbers</returns>
-        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecuteOptions executeOption, IEnumerable<ICommand> commands)
+        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executeOption, IEnumerable<ICommand> commands)
         {
             #region group execute commands
 
             IQueryTranslator translator = MySqlFactory.GetQueryTranslator(server);
-            List<DatabaseExecuteCommand> executeCommands = new List<DatabaseExecuteCommand>();
+            List<DatabaseExecutionCommand> executeCommands = new List<DatabaseExecutionCommand>();
             var batchExecuteConfig = DataManager.GetBatchExecuteConfiguration(server.ServerType) ?? BatchExecuteConfiguration.Default;
             var groupStatementsCount = batchExecuteConfig.GroupStatementsCount;
             groupStatementsCount = groupStatementsCount < 0 ? 1 : groupStatementsCount;
@@ -74,9 +74,9 @@ namespace EZNEW.Data.MySQL
             bool forceReturnValue = false;
             int cmdCount = 0;
 
-            DatabaseExecuteCommand GetGroupExecuteCommand()
+            DatabaseExecutionCommand GetGroupExecuteCommand()
             {
-                var executeCommand = new DatabaseExecuteCommand()
+                var executeCommand = new DatabaseExecutionCommand()
                 {
                     CommandText = commandTextBuilder.ToString(),
                     CommandType = CommandType.Text,
@@ -93,14 +93,14 @@ namespace EZNEW.Data.MySQL
 
             foreach (var cmd in commands)
             {
-                DatabaseExecuteCommand executeCommand = GetExecuteDbCommand(translator, cmd as RdbCommand);
+                DatabaseExecutionCommand executeCommand = GetExecuteDbCommand(translator, cmd as DefaultCommand);
                 if (executeCommand == null)
                 {
                     continue;
                 }
 
                 //Trace log
-                MySqlFactory.LogExecuteCommand(executeCommand);
+                MySqlFactory.LogExecutionCommand(executeCommand);
 
                 cmdCount++;
                 if (executeCommand.PerformAlone)
@@ -138,7 +138,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeOption">Execute options</param>
         /// <param name="commands">Commands</param>
         /// <returns>Return the affected data numbers</returns>
-        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecuteOptions executeOption, params ICommand[] commands)
+        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executeOption, params ICommand[] commands)
         {
             IEnumerable<ICommand> cmdCollection = commands;
             return await ExecuteAsync(server, executeOption, cmdCollection).ConfigureAwait(false);
@@ -151,7 +151,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="executeCommands">Execute commands</param>
         /// <param name="useTransaction">Use transaction</param>
         /// <returns>Return the affected data numbers</returns>
-        async Task<int> ExecuteCommandAsync(DatabaseServer server, CommandExecuteOptions executeOption, IEnumerable<DatabaseExecuteCommand> executeCommands, bool useTransaction)
+        async Task<int> ExecuteCommandAsync(DatabaseServer server, CommandExecutionOptions executeOption, IEnumerable<DatabaseExecutionCommand> executeCommands, bool useTransaction)
         {
             int resultValue = 0;
             bool success = true;
@@ -168,7 +168,7 @@ namespace EZNEW.Data.MySQL
                     {
                         var cmdDefinition = new CommandDefinition(cmd.CommandText, MySqlFactory.ConvertCmdParameters(cmd.Parameters), transaction: transaction, commandType: cmd.CommandType, cancellationToken: executeOption?.CancellationToken ?? default);
                         var executeResultValue = await conn.ExecuteAsync(cmdDefinition).ConfigureAwait(false);
-                        success = success && (cmd.ForceReturnValue ? executeResultValue > 0 : true);
+                        success = success && (!cmd.ForceReturnValue || executeResultValue > 0);
                         resultValue += executeResultValue;
                         if (useTransaction && !success)
                         {
@@ -204,11 +204,11 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="command">Command</param>
         /// <returns>Return a database execute command</returns>
-        DatabaseExecuteCommand GetExecuteDbCommand(IQueryTranslator queryTranslator, RdbCommand command)
+        DatabaseExecutionCommand GetExecuteDbCommand(IQueryTranslator queryTranslator, DefaultCommand command)
         {
-            DatabaseExecuteCommand GetTextCommand()
+            DatabaseExecutionCommand GetTextCommand()
             {
-                return new DatabaseExecuteCommand()
+                return new DatabaseExecutionCommand()
                 {
                     CommandText = command.CommandText,
                     Parameters = MySqlFactory.ParseParameters(command.Parameters),
@@ -217,20 +217,20 @@ namespace EZNEW.Data.MySQL
                     HasPreScript = true
                 };
             }
-            if (command.ExecuteMode == CommandExecuteMode.CommandText)
+            if (command.ExecutionMode == CommandExecutionMode.CommandText)
             {
                 return GetTextCommand();
             }
-            DatabaseExecuteCommand executeCommand;
+            DatabaseExecutionCommand executeCommand;
             switch (command.OperateType)
             {
-                case OperateType.Insert:
+                case CommandOperationType.Insert:
                     executeCommand = GetInsertExecuteDbCommand(queryTranslator, command);
                     break;
-                case OperateType.Update:
+                case CommandOperationType.Update:
                     executeCommand = GetUpdateExecuteDbCommand(queryTranslator, command);
                     break;
-                case OperateType.Delete:
+                case CommandOperationType.Delete:
                     executeCommand = GetDeleteExecuteDbCommand(queryTranslator, command);
                     break;
                 default:
@@ -246,7 +246,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="translator">Translator</param>
         /// <param name="command">Command</param>
         /// <returns>Return an insert execute command</returns>
-        DatabaseExecuteCommand GetInsertExecuteDbCommand(IQueryTranslator translator, RdbCommand command)
+        DatabaseExecutionCommand GetInsertExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
         {
             string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
             var fields = DataManager.GetEditFields(DatabaseServerType.MySQL, command.EntityType);
@@ -259,7 +259,7 @@ namespace EZNEW.Data.MySQL
             string cmdText = $"INSERT INTO {MySqlFactory.WrapKeyword(objectName)} ({string.Join(",", insertFormatResult.Item1)}) VALUES ({string.Join(",", insertFormatResult.Item2)});";
             CommandParameters parameters = insertFormatResult.Item3;
             translator.ParameterSequence += fieldCount;
-            return new DatabaseExecuteCommand()
+            return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
                 CommandType = MySqlFactory.GetCommandType(command),
@@ -274,7 +274,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="translator">Translator</param>
         /// <param name="command">Command</param>
         /// <returns>Return an update execute command</returns>
-        DatabaseExecuteCommand GetUpdateExecuteDbCommand(IQueryTranslator translator, RdbCommand command)
+        DatabaseExecutionCommand GetUpdateExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
         {
             #region query translate
 
@@ -306,13 +306,13 @@ namespace EZNEW.Data.MySQL
                     parameterSequence++;
                     parameterName = MySqlFactory.FormatParameterName(parameterName, parameterSequence);
                     parameters.Rename(field.PropertyName, parameterName);
-                    if (parameterValue is IModifyValue)
+                    if (parameterValue is IModificationValue)
                     {
-                        var modifyValue = parameterValue as IModifyValue;
+                        var modifyValue = parameterValue as IModificationValue;
                         parameters.ModifyValue(parameterName, modifyValue.Value);
-                        if (parameterValue is CalculateModifyValue)
+                        if (parameterValue is CalculationModificationValue)
                         {
-                            var calculateModifyValue = parameterValue as CalculateModifyValue;
+                            var calculateModifyValue = parameterValue as CalculationModificationValue;
                             string calChar = MySqlFactory.GetCalculateChar(calculateModifyValue.Operator);
                             newValueExpression = $"{translator.ObjectPetName}.{MySqlFactory.WrapKeyword(field.FieldName)}{calChar}{MySqlFactory.ParameterPrefix}{parameterName}";
                         }
@@ -336,7 +336,7 @@ namespace EZNEW.Data.MySQL
 
             #endregion
 
-            return new DatabaseExecuteCommand()
+            return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
                 CommandType = MySqlFactory.GetCommandType(command),
@@ -352,7 +352,7 @@ namespace EZNEW.Data.MySQL
         /// <param name="translator">Translator</param>
         /// <param name="command">Command</param>
         /// <returns>Return a delete execute command</returns>
-        DatabaseExecuteCommand GetDeleteExecuteDbCommand(IQueryTranslator translator, RdbCommand command)
+        DatabaseExecutionCommand GetDeleteExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
         {
             #region query translate
 
@@ -382,7 +382,7 @@ namespace EZNEW.Data.MySQL
 
             #endregion
 
-            return new DatabaseExecuteCommand()
+            return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
                 CommandType = MySqlFactory.GetCommandType(command),
@@ -471,7 +471,7 @@ namespace EZNEW.Data.MySQL
             using (var conn = MySqlFactory.GetConnection(server))
             {
                 var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.QueryAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
@@ -581,7 +581,7 @@ namespace EZNEW.Data.MySQL
             using (var conn = MySqlFactory.GetConnection(server))
             {
                 var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.QueryAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
@@ -758,7 +758,7 @@ namespace EZNEW.Data.MySQL
             using (var conn = MySqlFactory.GetConnection(server))
             {
                 var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.ExecuteScalarAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
@@ -777,7 +777,7 @@ namespace EZNEW.Data.MySQL
             {
                 var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
                 DynamicParameters parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(command.Parameters));
-                var cmdDefinition = new CommandDefinition(command.CommandText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as RdbCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var cmdDefinition = new CommandDefinition(command.CommandText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 using (var reader = await conn.ExecuteReaderAsync(cmdDefinition).ConfigureAwait(false))
                 {
                     DataSet dataSet = new DataSet();
@@ -832,7 +832,7 @@ namespace EZNEW.Data.MySQL
             {
                 try
                 {
-                    dataFilePath = Path.Combine(ApplicationManager.ApplicationExecutableDirectory, dataFilePath);
+                    dataFilePath = Path.Combine(ApplicationManager.RootPath, dataFilePath);
                     MySqlBulkLoader loader = new MySqlBulkLoader(conn)
                     {
                         Local = true,
