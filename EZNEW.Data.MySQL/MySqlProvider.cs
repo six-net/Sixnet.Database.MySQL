@@ -4,6 +4,8 @@ using System.Data;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Globalization;
+using System.IO;
 using EZNEW.Dapper;
 using EZNEW.Development.Entity;
 using EZNEW.Development.Query;
@@ -13,8 +15,7 @@ using EZNEW.Development.Command.Modification;
 using EZNEW.Exceptions;
 using EZNEW.Data.Configuration;
 using MySql.Data.MySqlClient;
-using System.Globalization;
-using System.IO;
+
 using EZNEW.Application;
 
 namespace EZNEW.Data.MySQL
