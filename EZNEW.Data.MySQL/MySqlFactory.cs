@@ -8,14 +8,12 @@ using EZNEW.Development.Query.CriteriaConverter;
 using EZNEW.Development.Query.Translator;
 using EZNEW.Exceptions;
 using EZNEW.Logging;
-using EZNEW.Serialization;
 using EZNEW.Development.Command;
 using EZNEW.Development.Query;
 using EZNEW.Development.Entity;
 using EZNEW.Development.Command.Modification;
-using EZNEW.Dapper;
+using Dapper;
 using EZNEW.Development.DataAccess;
-using EZNEW.Diagnostics;
 
 namespace EZNEW.Data.MySQL
 {

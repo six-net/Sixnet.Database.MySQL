@@ -1,8 +1,8 @@
-﻿using MySql.Data.MySqlClient;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using MySql.Data.MySqlClient;
 
 namespace EZNEW.Data.MySQL
 {
