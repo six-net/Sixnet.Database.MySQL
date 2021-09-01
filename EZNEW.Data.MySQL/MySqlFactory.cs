@@ -3,7 +3,6 @@ using System.Data;
 using System.Collections.Generic;
 using System.Linq;
 using MySql.Data.MySqlClient;
-using Dapper;
 using EZNEW.Data.CriteriaConverter;
 using EZNEW.Development.Query.CriteriaConverter;
 using EZNEW.Development.Query.Translator;
@@ -13,6 +12,7 @@ using EZNEW.Development.Command;
 using EZNEW.Development.Query;
 using EZNEW.Development.Entity;
 using EZNEW.Development.Command.Modification;
+using Dapper;
 using EZNEW.Development.DataAccess;
 
 namespace EZNEW.Data.MySQL
