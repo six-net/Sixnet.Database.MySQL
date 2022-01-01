@@ -6,10 +6,13 @@ using MySql.Data.MySqlClient;
 
 namespace EZNEW.Data.MySQL
 {
-    public class MySqlBulkInsertOptions : IBulkInsertOptions
+    /// <summary>
+    /// Defines bulk insertion options for mysql
+    /// </summary>
+    public class MySqlBulkInsertionOptions : IBulkInsertionOptions
     {
         /// <summary>
-        /// Gets or sets the priority.
+        /// Gets or sets the loader priority.
         /// </summary>
         public MySqlBulkLoaderPriority Priority { get; set; } = MySqlBulkLoaderPriority.None;
 
@@ -24,7 +27,7 @@ namespace EZNEW.Data.MySQL
         public char EscapeCharacter { get; set; }
 
         /// <summary>
-        /// Gets or sets a value indicating whether [field quotation optional].
+        /// Indicates whether [field quotation optional].
         /// </summary>
         public bool FieldQuotationOptional { get; set; }
 

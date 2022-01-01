@@ -6,68 +6,82 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Globalization;
 using System.IO;
-using EZNEW.Dapper;
+using Dapper;
+using MySql.Data.MySqlClient;
 using EZNEW.Development.Entity;
 using EZNEW.Development.Query;
-using EZNEW.Development.Query.Translator;
+using EZNEW.Development.Query.Translation;
 using EZNEW.Development.Command;
-using EZNEW.Development.Command.Modification;
 using EZNEW.Exceptions;
 using EZNEW.Data.Configuration;
-using MySql.Data.MySqlClient;
-
 using EZNEW.Application;
+using EZNEW.Data.Modification;
 
 namespace EZNEW.Data.MySQL
 {
     /// <summary>
-    /// Imeplements database provider for mysql
+    /// Defines database provider implementation for mysql database(8.0+)
     /// </summary>
     public class MySqlProvider : IDatabaseProvider
     {
+        const DatabaseServerType CurrentDatabaseServerType = MySqlManager.CurrentDatabaseServerType;
+
         #region Execute
 
         /// <summary>
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOptions">Execute options</param>
+        /// <param name="executionOptions">Execution options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return the affected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecutionOptions executeOptions, IEnumerable<ICommand> commands)
+        /// <returns>Return affected data number</returns>
+        public int Execute(DatabaseServer server, CommandExecutionOptions executionOptions, IEnumerable<ICommand> commands)
         {
-            return ExecuteAsync(server, executeOptions, commands).Result;
+            return ExecuteAsync(server, executionOptions, commands).Result;
         }
 
         /// <summary>
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOptions">Execute options</param>
+        /// <param name="executionOptions">Execution options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return the affected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecutionOptions executeOptions, params ICommand[] commands)
+        /// <returns>Return affected data number</returns>
+        public int Execute(DatabaseServer server, CommandExecutionOptions executionOptions, params ICommand[] commands)
         {
-            return ExecuteAsync(server, executeOptions, commands).Result;
+            return ExecuteAsync(server, executionOptions, commands).Result;
         }
 
         /// <summary>
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute options</param>
+        /// <param name="executionOptions">Execution options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return the affected data numbers</returns>
-        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executeOption, IEnumerable<ICommand> commands)
+        /// <returns>Return affected data number</returns>
+        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executionOptions, params ICommand[] commands)
         {
-            #region group execute commands
+            IEnumerable<ICommand> cmdCollection = commands;
+            return await ExecuteAsync(server, executionOptions, cmdCollection).ConfigureAwait(false);
+        }
 
-            IQueryTranslator translator = MySqlFactory.GetQueryTranslator(server);
-            List<DatabaseExecutionCommand> executeCommands = new List<DatabaseExecutionCommand>();
-            var batchExecuteConfig = DataManager.GetBatchExecuteConfiguration(server.ServerType) ?? BatchExecuteConfiguration.Default;
-            var groupStatementsCount = batchExecuteConfig.GroupStatementsCount;
+        /// <summary>
+        /// Execute command
+        /// </summary>
+        /// <param name="server">Database server</param>
+        /// <param name="executionOptions">Execution options</param>
+        /// <param name="commands">Commands</param>
+        /// <returns>Return affected data number</returns>
+        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executionOptions, IEnumerable<ICommand> commands)
+        {
+            #region group execution commands
+
+            IQueryTranslator translator = MySqlManager.GetQueryTranslator(DataAccessContext.Create(server));
+            List<DatabaseExecutionCommand> databaseExecutionCommands = new List<DatabaseExecutionCommand>();
+            var batchExecutionConfig = DataManager.GetBatchExecutionConfiguration(server.ServerType) ?? BatchExecutionConfiguration.Default;
+            var groupStatementsCount = batchExecutionConfig.GroupStatementsCount;
             groupStatementsCount = groupStatementsCount < 0 ? 1 : groupStatementsCount;
-            var groupParameterCount = batchExecuteConfig.GroupParametersCount;
+            var groupParameterCount = batchExecutionConfig.GroupParametersCount;
             groupParameterCount = groupParameterCount < 0 ? 1 : groupParameterCount;
             StringBuilder commandTextBuilder = new StringBuilder();
             CommandParameters parameters = null;
@@ -77,11 +91,11 @@ namespace EZNEW.Data.MySQL
 
             DatabaseExecutionCommand GetGroupExecuteCommand()
             {
-                var executeCommand = new DatabaseExecutionCommand()
+                var executionCommand = new DatabaseExecutionCommand()
                 {
                     CommandText = commandTextBuilder.ToString(),
                     CommandType = CommandType.Text,
-                    ForceReturnValue = forceReturnValue,
+                    MustAffectedData = forceReturnValue,
                     Parameters = parameters
                 };
                 statementsCount = 0;
@@ -89,88 +103,76 @@ namespace EZNEW.Data.MySQL
                 commandTextBuilder.Clear();
                 parameters = null;
                 forceReturnValue = false;
-                return executeCommand;
+                return executionCommand;
             }
 
             foreach (var cmd in commands)
             {
-                DatabaseExecutionCommand executeCommand = GetExecuteDbCommand(translator, cmd as DefaultCommand);
-                if (executeCommand == null)
+                DatabaseExecutionCommand executionCommand = GetDatabaseExecutionCommand(translator, cmd as DefaultCommand);
+                if (executionCommand == null)
                 {
                     continue;
                 }
 
                 //Trace log
-                MySqlFactory.LogExecutionCommand(executeCommand);
+                MySqlManager.LogExecutionCommand(executionCommand);
 
                 cmdCount++;
-                if (executeCommand.PerformAlone)
+                if (executionCommand.PerformAlone)
                 {
                     if (statementsCount > 0)
                     {
-                        executeCommands.Add(GetGroupExecuteCommand());
+                        databaseExecutionCommands.Add(GetGroupExecuteCommand());
                     }
-                    executeCommands.Add(executeCommand);
+                    databaseExecutionCommands.Add(executionCommand);
                     continue;
                 }
-                commandTextBuilder.AppendLine(executeCommand.CommandText);
-                parameters = parameters == null ? executeCommand.Parameters : parameters.Union(executeCommand.Parameters);
-                forceReturnValue |= executeCommand.ForceReturnValue;
+                commandTextBuilder.AppendLine(executionCommand.CommandText);
+                parameters = parameters == null ? executionCommand.Parameters : parameters.Union(executionCommand.Parameters);
+                forceReturnValue |= executionCommand.MustAffectedData;
                 statementsCount++;
                 if (translator.ParameterSequence >= groupParameterCount || statementsCount >= groupStatementsCount)
                 {
-                    executeCommands.Add(GetGroupExecuteCommand());
+                    databaseExecutionCommands.Add(GetGroupExecuteCommand());
                 }
             }
             if (statementsCount > 0)
             {
-                executeCommands.Add(GetGroupExecuteCommand());
+                databaseExecutionCommands.Add(GetGroupExecuteCommand());
             }
 
             #endregion
 
-            return await ExecuteCommandAsync(server, executeOption, executeCommands, executeOption?.ExecuteByTransaction ?? cmdCount > 1).ConfigureAwait(false);
+            return await ExecuteDatabaseCommandAsync(server, executionOptions, databaseExecutionCommands, executionOptions?.ExecutionByTransaction ?? cmdCount > 1).ConfigureAwait(false);
         }
 
         /// <summary>
-        /// Execute command
+        /// Execute database command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute options</param>
-        /// <param name="commands">Commands</param>
-        /// <returns>Return the affected data numbers</returns>
-        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executeOption, params ICommand[] commands)
+        /// <param name="executionOptions">Execution options</param>
+        /// <param name="databaseExecutionCommands">Database execution commands</param>
+        /// <param name="useTransaction">Whether use transaction</param>
+        /// <returns>Return affected data number</returns>
+        async Task<int> ExecuteDatabaseCommandAsync(DatabaseServer server, CommandExecutionOptions executionOptions, IEnumerable<DatabaseExecutionCommand> databaseExecutionCommands, bool useTransaction)
         {
-            IEnumerable<ICommand> cmdCollection = commands;
-            return await ExecuteAsync(server, executeOption, cmdCollection).ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Execute commands
-        /// </summary>
-        /// <param name="server">Database server</param>
-        /// <param name="executeCommands">Execute commands</param>
-        /// <param name="useTransaction">Use transaction</param>
-        /// <returns>Return the affected data numbers</returns>
-        async Task<int> ExecuteCommandAsync(DatabaseServer server, CommandExecutionOptions executeOption, IEnumerable<DatabaseExecutionCommand> executeCommands, bool useTransaction)
-        {
-            int resultValue = 0;
+            int totalAffectedNumber = 0;
             bool success = true;
-            using (var conn = MySqlFactory.GetConnection(server))
+            using (var conn = MySqlManager.GetConnection(server))
             {
                 IDbTransaction transaction = null;
                 if (useTransaction)
                 {
-                    transaction = MySqlFactory.GetExecuteTransaction(conn, executeOption);
+                    transaction = MySqlManager.GetExecutionTransaction(conn, executionOptions);
                 }
                 try
                 {
-                    foreach (var cmd in executeCommands)
+                    foreach (var executionCommand in databaseExecutionCommands)
                     {
-                        var cmdDefinition = new CommandDefinition(cmd.CommandText, MySqlFactory.ConvertCmdParameters(cmd.Parameters), transaction: transaction, commandType: cmd.CommandType, cancellationToken: executeOption?.CancellationToken ?? default);
-                        var executeResultValue = await conn.ExecuteAsync(cmdDefinition).ConfigureAwait(false);
-                        success = success && (!cmd.ForceReturnValue || executeResultValue > 0);
-                        resultValue += executeResultValue;
+                        var cmdDefinition = new CommandDefinition(executionCommand.CommandText, MySqlManager.ConvertCmdParameters(executionCommand.Parameters), transaction: transaction, commandType: executionCommand.CommandType, cancellationToken: executionOptions?.CancellationToken ?? default);
+                        var affectedNumber = await conn.ExecuteAsync(cmdDefinition).ConfigureAwait(false);
+                        success = success && (!executionCommand.MustAffectedData || affectedNumber > 0);
+                        totalAffectedNumber += affectedNumber;
                         if (useTransaction && !success)
                         {
                             break;
@@ -178,7 +180,7 @@ namespace EZNEW.Data.MySQL
                     }
                     if (!useTransaction)
                     {
-                        return resultValue;
+                        return totalAffectedNumber;
                     }
                     if (success)
                     {
@@ -186,14 +188,14 @@ namespace EZNEW.Data.MySQL
                     }
                     else
                     {
-                        resultValue = 0;
+                        totalAffectedNumber = 0;
                         transaction.Rollback();
                     }
-                    return resultValue;
+                    return totalAffectedNumber;
                 }
                 catch (Exception ex)
                 {
-                    resultValue = 0;
+                    totalAffectedNumber = 0;
                     transaction?.Rollback();
                     throw ex;
                 }
@@ -201,20 +203,21 @@ namespace EZNEW.Data.MySQL
         }
 
         /// <summary>
-        /// Get execute database execute command
+        /// Get database execution command
         /// </summary>
+        /// <param name="queryTranslator">Query translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return a database execute command</returns>
-        DatabaseExecutionCommand GetExecuteDbCommand(IQueryTranslator queryTranslator, DefaultCommand command)
+        /// <returns>Return a database execution command</returns>
+        DatabaseExecutionCommand GetDatabaseExecutionCommand(IQueryTranslator queryTranslator, DefaultCommand command)
         {
             DatabaseExecutionCommand GetTextCommand()
             {
                 return new DatabaseExecutionCommand()
                 {
-                    CommandText = command.CommandText,
-                    Parameters = MySqlFactory.ParseParameters(command.Parameters),
-                    CommandType = MySqlFactory.GetCommandType(command),
-                    ForceReturnValue = command.MustReturnValueOnSuccess,
+                    CommandText = command.Text,
+                    Parameters = MySqlManager.ConvertParameter(command.Parameters),
+                    CommandType = MySqlManager.GetCommandType(command),
+                    MustAffectedData = command.MustAffectedData,
                     HasPreScript = true
                 };
             }
@@ -222,79 +225,86 @@ namespace EZNEW.Data.MySQL
             {
                 return GetTextCommand();
             }
-            DatabaseExecutionCommand executeCommand;
-            switch (command.OperateType)
+            DatabaseExecutionCommand databaseExecutionCommand;
+            switch (command.OperationType)
             {
                 case CommandOperationType.Insert:
-                    executeCommand = GetInsertExecuteDbCommand(queryTranslator, command);
+                    databaseExecutionCommand = GetDatabaseInsertionCommand(queryTranslator, command);
                     break;
                 case CommandOperationType.Update:
-                    executeCommand = GetUpdateExecuteDbCommand(queryTranslator, command);
+                    databaseExecutionCommand = GetDatabaseUpdateCommand(queryTranslator, command);
                     break;
                 case CommandOperationType.Delete:
-                    executeCommand = GetDeleteExecuteDbCommand(queryTranslator, command);
+                    databaseExecutionCommand = GetDatabaseDeletionCommand(queryTranslator, command);
                     break;
                 default:
-                    executeCommand = GetTextCommand();
+                    databaseExecutionCommand = GetTextCommand();
                     break;
             }
-            return executeCommand;
+            return databaseExecutionCommand;
         }
 
         /// <summary>
-        /// Get insert execute DbCommand
+        /// Get database insertion execution command
         /// </summary>
-        /// <param name="translator">Translator</param>
+        /// <param name="translator">Query translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return an insert execute command</returns>
-        DatabaseExecutionCommand GetInsertExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
+        /// <returns>Return a database insertion command</returns>
+        DatabaseExecutionCommand GetDatabaseInsertionCommand(IQueryTranslator translator, DefaultCommand command)
         {
-            string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-            var fields = DataManager.GetEditFields(DatabaseServerType.MySQL, command.EntityType);
+            translator.DataAccessContext.SetCommand(command);
+            string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+            var fields = DataManager.GetEditFields(CurrentDatabaseServerType, command.EntityType);
             var fieldCount = fields.GetCount();
-            var insertFormatResult = MySqlFactory.FormatInsertFields(fieldCount, fields, command.Parameters, translator.ParameterSequence);
+            var insertFormatResult = MySqlManager.FormatInsertionFields(command.EntityType, fieldCount, fields, command.Parameters, translator.ParameterSequence);
             if (insertFormatResult == null)
             {
                 return null;
             }
-            string cmdText = $"INSERT INTO {MySqlFactory.WrapKeyword(objectName)} ({string.Join(",", insertFormatResult.Item1)}) VALUES ({string.Join(",", insertFormatResult.Item2)});";
+            string cmdText = $"INSERT INTO {MySqlManager.WrapKeyword(objectName)} ({string.Join(",", insertFormatResult.Item1)}) VALUES ({string.Join(",", insertFormatResult.Item2)});";
             CommandParameters parameters = insertFormatResult.Item3;
             translator.ParameterSequence += fieldCount;
             return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
-                CommandType = MySqlFactory.GetCommandType(command),
-                ForceReturnValue = command.MustReturnValueOnSuccess,
+                CommandType = MySqlManager.GetCommandType(command),
+                MustAffectedData = command.MustAffectedData,
                 Parameters = parameters
             };
         }
 
         /// <summary>
-        /// Get update execute command
+        /// Get database update command
         /// </summary>
-        /// <param name="translator">Translator</param>
+        /// <param name="translator">Query translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return an update execute command</returns>
-        DatabaseExecutionCommand GetUpdateExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
+        /// <returns>Return a database update command</returns>
+        DatabaseExecutionCommand GetDatabaseUpdateCommand(IQueryTranslator translator, DefaultCommand command)
         {
-            #region query translate
-
-            var tranResult = translator.Translate(command.Query);
-            string conditionString = string.Empty;
-            if (!string.IsNullOrWhiteSpace(tranResult.ConditionString))
+            if (command?.Fields.IsNullOrEmpty() ?? true)
             {
-                conditionString += "WHERE " + tranResult.ConditionString;
+                throw new EZNEWException($"No fields are set to update");
             }
-            string preScript = tranResult.PreScript;
-            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
+
+            #region query translation
+
+            translator.DataAccessContext.SetCommand(command);
+            var queryTranslationResult = translator.Translate(command.Query);
+            string conditionString = string.Empty;
+            if (!string.IsNullOrWhiteSpace(queryTranslationResult.ConditionString))
+            {
+                conditionString += "WHERE " + queryTranslationResult.ConditionString;
+            }
+            string preScript = queryTranslationResult.PreScript;
+            string joinScript = queryTranslationResult.AllowJoin ? queryTranslationResult.JoinScript : string.Empty;
 
             #endregion
 
             #region script 
 
-            CommandParameters parameters = MySqlFactory.ParseParameters(command.Parameters) ?? new CommandParameters();
-            string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-            var fields = MySqlFactory.GetFields(command.EntityType, command.Fields);
+            CommandParameters parameters = MySqlManager.ConvertParameter(command.Parameters) ?? new CommandParameters();
+            string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+            var fields = MySqlManager.GetFields(command.EntityType, command.Fields);
             int parameterSequence = translator.ParameterSequence;
             List<string> updateSetArray = new List<string>();
             foreach (var field in fields)
@@ -305,34 +315,34 @@ namespace EZNEW.Data.MySQL
                 if (parameterValue != null)
                 {
                     parameterSequence++;
-                    parameterName = MySqlFactory.FormatParameterName(parameterName, parameterSequence);
+                    parameterName = MySqlManager.FormatParameterName(parameterName, parameterSequence);
                     parameters.Rename(field.PropertyName, parameterName);
                     if (parameterValue is IModificationValue)
                     {
-                        var modifyValue = parameterValue as IModificationValue;
-                        parameters.ModifyValue(parameterName, modifyValue.Value);
+                        var modificationValue = parameterValue as IModificationValue;
+                        parameters.ModifyValue(parameterName, modificationValue.Value);
                         if (parameterValue is CalculationModificationValue)
                         {
-                            var calculateModifyValue = parameterValue as CalculationModificationValue;
-                            string calChar = MySqlFactory.GetCalculateChar(calculateModifyValue.Operator);
-                            newValueExpression = $"{translator.ObjectPetName}.{MySqlFactory.WrapKeyword(field.FieldName)}{calChar}{MySqlFactory.ParameterPrefix}{parameterName}";
+                            var calculationModificationValue = parameterValue as CalculationModificationValue;
+                            string systemCalculationOperator = MySqlManager.GetSystemCalculationOperator(calculationModificationValue.Operator);
+                            newValueExpression = $"{translator.ObjectPetName}.{MySqlManager.WrapKeyword(field.FieldName)}{systemCalculationOperator}{MySqlManager.ParameterPrefix}{parameterName}";
                         }
                     }
                 }
                 if (string.IsNullOrWhiteSpace(newValueExpression))
                 {
-                    newValueExpression = $"{MySqlFactory.ParameterPrefix}{parameterName}";
+                    newValueExpression = $"{MySqlManager.ParameterPrefix}{parameterName}";
                 }
-                updateSetArray.Add($"{translator.ObjectPetName}.{MySqlFactory.WrapKeyword(field.FieldName)}={newValueExpression}");
+                updateSetArray.Add($"{translator.ObjectPetName}.{MySqlManager.WrapKeyword(field.FieldName)}={newValueExpression}");
             }
-            string cmdText = $"{preScript}UPDATE {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} SET {string.Join(",", updateSetArray)} {conditionString};";
+            string cmdText = $"{preScript}UPDATE {MySqlManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} SET {string.Join(",", updateSetArray)} {conditionString};";
             translator.ParameterSequence = parameterSequence;
 
             #endregion
 
             #region parameter
 
-            var queryParameters = MySqlFactory.ParseParameters(tranResult.Parameters);
+            var queryParameters = MySqlManager.ConvertParameter(queryTranslationResult.Parameters);
             parameters.Union(queryParameters);
 
             #endregion
@@ -340,45 +350,47 @@ namespace EZNEW.Data.MySQL
             return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
-                CommandType = MySqlFactory.GetCommandType(command),
-                ForceReturnValue = command.MustReturnValueOnSuccess,
+                CommandType = MySqlManager.GetCommandType(command),
+                MustAffectedData = command.MustAffectedData,
                 Parameters = parameters,
                 HasPreScript = !string.IsNullOrWhiteSpace(preScript)
             };
         }
 
         /// <summary>
-        /// Get delete execute command
+        /// Get database deletion command
         /// </summary>
-        /// <param name="translator">Translator</param>
+        /// <param name="translator">Query translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return a delete execute command</returns>
-        DatabaseExecutionCommand GetDeleteExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
+        /// <returns>Return a database deletion command</returns>
+        DatabaseExecutionCommand GetDatabaseDeletionCommand(IQueryTranslator translator, DefaultCommand command)
         {
-            #region query translate
+            translator.DataAccessContext.SetCommand(command);
 
-            var tranResult = translator.Translate(command.Query);
+            #region query translation
+
+            var queryTranslationResult = translator.Translate(command.Query);
             string conditionString = string.Empty;
-            if (!string.IsNullOrWhiteSpace(tranResult.ConditionString))
+            if (!string.IsNullOrWhiteSpace(queryTranslationResult.ConditionString))
             {
-                conditionString += "WHERE " + tranResult.ConditionString;
+                conditionString += "WHERE " + queryTranslationResult.ConditionString;
             }
-            string preScript = tranResult.PreScript;
-            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
+            string preScript = queryTranslationResult.PreScript;
+            string joinScript = queryTranslationResult.AllowJoin ? queryTranslationResult.JoinScript : string.Empty;
 
             #endregion
 
             #region script
 
-            string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-            string cmdText = $"{preScript}DELETE {translator.ObjectPetName} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString};";
+            string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+            string cmdText = $"{preScript}DELETE {translator.ObjectPetName} FROM {MySqlManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString};";
 
             #endregion
 
             #region parameter
 
-            CommandParameters parameters = MySqlFactory.ParseParameters(command.Parameters) ?? new CommandParameters();
-            var queryParameters = MySqlFactory.ParseParameters(tranResult.Parameters);
+            CommandParameters parameters = MySqlManager.ConvertParameter(command.Parameters) ?? new CommandParameters();
+            var queryParameters = MySqlManager.ConvertParameter(queryTranslationResult.Parameters);
             parameters.Union(queryParameters);
 
             #endregion
@@ -386,8 +398,8 @@ namespace EZNEW.Data.MySQL
             return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
-                CommandType = MySqlFactory.GetCommandType(command),
-                ForceReturnValue = command.MustReturnValueOnSuccess,
+                CommandType = MySqlManager.GetCommandType(command),
+                MustAffectedData = command.MustAffectedData,
                 Parameters = parameters,
                 HasPreScript = !string.IsNullOrWhiteSpace(preScript)
             };
@@ -403,7 +415,7 @@ namespace EZNEW.Data.MySQL
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return the datas</returns>
+        /// <returns>Return datas</returns>
         public IEnumerable<T> Query<T>(DatabaseServer server, ICommand command)
         {
             return QueryAsync<T>(server, command).Result;
@@ -415,45 +427,45 @@ namespace EZNEW.Data.MySQL
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return the datas</returns>
+        /// <returns>Return datas</returns>
         public async Task<IEnumerable<T>> QueryAsync<T>(DatabaseServer server, ICommand command)
         {
             if (command.Query == null)
             {
-                throw new EZNEWException("ICommand.Query is null");
+                throw new EZNEWException($"{nameof(ICommand.Query)} is null");
             }
 
-            #region query translate
+            #region query translation
 
-            IQueryTranslator translator = MySqlFactory.GetQueryTranslator(server);
-            var tranResult = translator.Translate(command.Query);
-            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
+            IQueryTranslator translator = MySqlManager.GetQueryTranslator(DataAccessContext.Create(server, command));
+            var queryTranslationResult = translator.Translate(command.Query);
+            string joinScript = queryTranslationResult.AllowJoin ? queryTranslationResult.JoinScript : string.Empty;
 
             #endregion
 
             #region script
 
             string cmdText;
-            switch (command.Query.QueryType)
+            switch (command.Query.ExecutionMode)
             {
-                case QueryCommandType.Text:
-                    cmdText = tranResult.ConditionString;
+                case QueryExecutionMode.Text:
+                    cmdText = queryTranslationResult.ConditionString;
                     break;
-                case QueryCommandType.QueryObject:
+                case QueryExecutionMode.QueryObject:
                 default:
                     int size = command.Query.QuerySize;
-                    string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-                    string orderString = string.IsNullOrWhiteSpace(tranResult.OrderString) ? string.Empty : $"ORDER BY {tranResult.OrderString}";
-                    var queryFields = MySqlFactory.GetQueryFields(command.Query, command.EntityType, true);
-                    string outputFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
-                    if (string.IsNullOrWhiteSpace(tranResult.CombineScript))
+                    string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+                    string sortString = string.IsNullOrWhiteSpace(queryTranslationResult.SortString) ? string.Empty : $"ORDER BY {queryTranslationResult.SortString}";
+                    var queryFields = MySqlManager.GetQueryFields(command.Query, command.EntityType, true);
+                    string outputFormatedField = string.Join(",", MySqlManager.FormatQueryFields(translator.ObjectPetName, queryFields, true));
+                    if (string.IsNullOrWhiteSpace(queryTranslationResult.CombineScript))
                     {
-                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                        cmdText = $"{queryTranslationResult.PreScript}SELECT {outputFormatedField} FROM {MySqlManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(queryTranslationResult.ConditionString) ? string.Empty : $"WHERE {queryTranslationResult.ConditionString}")} {sortString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
                     }
                     else
                     {
-                        string innerFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
-                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM (SELECT {innerFormatedField} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                        string innerFormatedField = string.Join(",", MySqlManager.FormatQueryFields(translator.ObjectPetName, queryFields, false));
+                        cmdText = $"{queryTranslationResult.PreScript}SELECT {outputFormatedField} FROM (SELECT {innerFormatedField} FROM {MySqlManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(queryTranslationResult.ConditionString) ? string.Empty : $"WHERE {queryTranslationResult.ConditionString}")} {queryTranslationResult.CombineScript}) AS {translator.ObjectPetName} {sortString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
                     }
                     break;
             }
@@ -462,40 +474,40 @@ namespace EZNEW.Data.MySQL
 
             #region parameter
 
-            var parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(tranResult.Parameters));
+            var parameters = MySqlManager.ConvertCmdParameters(MySqlManager.ConvertParameter(queryTranslationResult.Parameters));
 
             #endregion
 
             //Trace log
-            MySqlFactory.LogScript(cmdText, tranResult.Parameters);
+            MySqlManager.LogScript(cmdText, queryTranslationResult.Parameters);
 
-            using (var conn = MySqlFactory.GetConnection(server))
+            using (var conn = MySqlManager.GetConnection(server))
             {
-                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = MySqlManager.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlManager.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.QueryAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Query data paging
+        /// Query paging data
         /// </summary>
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Databse server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return data paging</returns>
+        /// <returns>Return paging data</returns>
         public IEnumerable<T> QueryPaging<T>(DatabaseServer server, ICommand command)
         {
             return QueryPagingAsync<T>(server, command).Result;
         }
 
         /// <summary>
-        /// Query data paging
+        /// Query paging data
         /// </summary>
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Databse server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return data paging</returns>
+        /// <returns>Return paging data</returns>
         public async Task<IEnumerable<T>> QueryPagingAsync<T>(DatabaseServer server, ICommand command)
         {
             int beginIndex = 0;
@@ -536,35 +548,35 @@ namespace EZNEW.Data.MySQL
         {
             if (command.Query == null)
             {
-                throw new EZNEWException("ICommand.Query is null");
+                throw new EZNEWException($"{nameof(ICommand.Query)} is null");
             }
 
-            #region query translate
+            #region query translation
 
-            IQueryTranslator translator = MySqlFactory.GetQueryTranslator(server);
-            var tranResult = translator.Translate(command.Query);
+            IQueryTranslator translator = MySqlManager.GetQueryTranslator(DataAccessContext.Create(server, command));
+            var queryTranslationResult = translator.Translate(command.Query);
 
             #endregion
 
             #region script
 
-            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
+            string joinScript = queryTranslationResult.AllowJoin ? queryTranslationResult.JoinScript : string.Empty;
             string cmdText;
-            switch (command.Query.QueryType)
+            switch (command.Query.ExecutionMode)
             {
-                case QueryCommandType.Text:
-                    cmdText = tranResult.ConditionString;
+                case QueryExecutionMode.Text:
+                    cmdText = queryTranslationResult.ConditionString;
                     break;
-                case QueryCommandType.QueryObject:
+                case QueryExecutionMode.QueryObject:
                 default:
                     string limitString = $"LIMIT {offsetNum},{size}";
-                    string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-                    string defaultFieldName = MySqlFactory.GetDefaultFieldName(command.EntityType);
-                    var queryFields = MySqlFactory.GetQueryFields(command.Query, command.EntityType, true);
-                    string innerFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
-                    string outputFormatedField = string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
-                    string queryScript = $"SELECT {innerFormatedField} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}";
-                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {MySqlFactory.PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{MySqlFactory.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({MySqlFactory.WrapKeyword(defaultFieldName)}) FROM {MySqlFactory.PagingTableName}) AS QueryDataTotalCount,{outputFormatedField} FROM {MySqlFactory.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? $"{translator.ObjectPetName}.{MySqlFactory.WrapKeyword(defaultFieldName)} DESC" : $"{tranResult.OrderString}")} {limitString}";
+                    string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+                    string defaultFieldName = MySqlManager.GetDefaultFieldName(command.EntityType);
+                    var queryFields = MySqlManager.GetQueryFields(command.Query, command.EntityType, true);
+                    string innerFormatedField = string.Join(",", MySqlManager.FormatQueryFields(translator.ObjectPetName, queryFields, false));
+                    string outputFormatedField = string.Join(",", MySqlManager.FormatQueryFields(translator.ObjectPetName, queryFields, true));
+                    string queryScript = $"SELECT {innerFormatedField} FROM {MySqlManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(queryTranslationResult.ConditionString) ? string.Empty : $"WHERE {queryTranslationResult.ConditionString}")} {queryTranslationResult.CombineScript}";
+                    cmdText = $"{(string.IsNullOrWhiteSpace(queryTranslationResult.PreScript) ? $"WITH {MySqlManager.PagingTableName} AS ({queryScript})" : $"{queryTranslationResult.PreScript},{MySqlManager.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({MySqlManager.WrapKeyword(defaultFieldName)}) FROM {MySqlManager.PagingTableName}) AS {DataManager.PagingTotalCountFieldName},{outputFormatedField} FROM {MySqlManager.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(queryTranslationResult.SortString) ? $"{translator.ObjectPetName}.{MySqlManager.WrapKeyword(defaultFieldName)} DESC" : $"{queryTranslationResult.SortString}")} {limitString}";
                     break;
             }
 
@@ -572,44 +584,44 @@ namespace EZNEW.Data.MySQL
 
             #region parameter
 
-            var parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(tranResult.Parameters));
+            var parameters = MySqlManager.ConvertCmdParameters(MySqlManager.ConvertParameter(queryTranslationResult.Parameters));
 
             #endregion
 
             //Trace log
-            MySqlFactory.LogScript(cmdText, tranResult.Parameters);
+            MySqlManager.LogScript(cmdText, queryTranslationResult.Parameters);
 
-            using (var conn = MySqlFactory.GetConnection(server))
+            using (var conn = MySqlManager.GetConnection(server))
             {
-                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = MySqlManager.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlManager.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.QueryAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Query whether the data exists or not
+        /// Indecats whether exists data
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return whether the data exists or not</returns>
-        public bool Query(DatabaseServer server, ICommand command)
+        /// <returns>Return whether exists data</returns>
+        public bool Exists(DatabaseServer server, ICommand command)
         {
-            return QueryAsync(server, command).Result;
+            return ExistsAsync(server, command).Result;
         }
 
         /// <summary>
-        /// Query whether the data exists or not
+        /// Indecats whether exists data
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return whether the data exists or not</returns>
-        public async Task<bool> QueryAsync(DatabaseServer server, ICommand command)
+        /// <returns>Return whether exists data</returns>
+        public async Task<bool> ExistsAsync(DatabaseServer server, ICommand command)
         {
-            var translator = MySqlFactory.GetQueryTranslator(server);
 
-            #region query translate
+            #region query translation
 
+            var translator = MySqlManager.GetQueryTranslator(DataAccessContext.Create(server, command));
             command.Query.ClearQueryFields();
             var queryFields = EntityManager.GetPrimaryKeys(command.EntityType).ToArray();
             if (queryFields.IsNullOrEmpty())
@@ -617,32 +629,32 @@ namespace EZNEW.Data.MySQL
                 queryFields = EntityManager.GetQueryFields(command.EntityType).ToArray();
             }
             command.Query.AddQueryFields(queryFields);
-            var tranResult = translator.Translate(command.Query);
-            string conditionString = string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}";
-            string preScript = tranResult.PreScript;
-            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
+            var queryTranslationResult = translator.Translate(command.Query);
+            string conditionString = string.IsNullOrWhiteSpace(queryTranslationResult.ConditionString) ? string.Empty : $"WHERE {queryTranslationResult.ConditionString}";
+            string preScript = queryTranslationResult.PreScript;
+            string joinScript = queryTranslationResult.AllowJoin ? queryTranslationResult.JoinScript : string.Empty;
 
             #endregion
 
             #region script
 
-            string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-            string cmdText = $"{preScript}SELECT EXISTS(SELECT {string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString} {tranResult.CombineScript})";
+            string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+            string cmdText = $"{preScript}SELECT EXISTS(SELECT {string.Join(",", MySqlManager.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {MySqlManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString} {queryTranslationResult.CombineScript})";
 
             #endregion
 
             #region parameter
 
-            var parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(tranResult.Parameters));
+            var parameters = MySqlManager.ConvertCmdParameters(MySqlManager.ConvertParameter(queryTranslationResult.Parameters));
 
             #endregion
 
             //Trace log
-            MySqlFactory.LogScript(cmdText, tranResult.Parameters);
+            MySqlManager.LogScript(cmdText, queryTranslationResult.Parameters);
 
-            using (var conn = MySqlFactory.GetConnection(server))
+            using (var conn = MySqlManager.GetConnection(server))
             {
-                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
+                var tran = MySqlManager.GetQueryTransaction(conn, command.Query);
                 var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 int value = await conn.ExecuteScalarAsync<int>(cmdDefinition).ConfigureAwait(false);
                 return value > 0;
@@ -650,98 +662,98 @@ namespace EZNEW.Data.MySQL
         }
 
         /// <summary>
-        /// Query single value
+        /// Query aggregation value
         /// </summary>
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return the data</returns>
+        /// <returns>Return aggregation value</returns>
         public T AggregateValue<T>(DatabaseServer server, ICommand command)
         {
             return AggregateValueAsync<T>(server, command).Result;
         }
 
         /// <summary>
-        /// Query single value
+        /// Query aggregation value
         /// </summary>
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return the data</returns>
+        /// <returns>Return aggregation value</returns>
         public async Task<T> AggregateValueAsync<T>(DatabaseServer server, ICommand command)
         {
             if (command.Query == null)
             {
-                throw new EZNEWException("ICommand.Query is null");
+                throw new EZNEWException($"{nameof(ICommand.Query)} is null");
             }
 
-            #region query translate
+            #region query translation
 
-            bool queryObject = command.Query.QueryType == QueryCommandType.QueryObject;
-            string funcName = MySqlFactory.GetAggregateFunctionName(command.OperateType);
+            bool queryObject = command.Query.ExecutionMode == QueryExecutionMode.QueryObject;
+            string funcName = MySqlManager.GetAggregationFunctionName(command.OperationType);
             EntityField defaultField = null;
             if (queryObject)
             {
                 if (string.IsNullOrWhiteSpace(funcName))
                 {
-                    throw new NotSupportedException($"Not support {command.OperateType}");
+                    throw new NotSupportedException($"Not support {command.OperationType}");
                 }
-                if (MySqlFactory.AggregateOperateMustNeedField(command.OperateType))
+                if (MySqlManager.CheckAggregationOperationMustNeedField(command.OperationType))
                 {
                     if (command.Query.QueryFields.IsNullOrEmpty())
                     {
-                        throw new EZNEWException($"You must specify the field to perform for the {funcName} operation");
+                        throw new EZNEWException($"Must specify the field to perform for the {funcName} operation");
                     }
-                    defaultField = DataManager.GetField(DatabaseServerType.MySQL, command.EntityType, command.Query.QueryFields.First());
+                    defaultField = DataManager.GetField(CurrentDatabaseServerType, command.EntityType, command.Query.QueryFields.First());
                 }
                 else
                 {
-                    defaultField = DataManager.GetDefaultField(DatabaseServerType.MySQL, command.EntityType);
+                    defaultField = DataManager.GetDefaultField(CurrentDatabaseServerType, command.EntityType);
                 }
                 //combine fields
-                if (!command.Query.CombineItems.IsNullOrEmpty())
+                if (!command.Query.Combines.IsNullOrEmpty())
                 {
                     var combineKeys = EntityManager.GetPrimaryKeys(command.EntityType).Union(new string[1] { defaultField.PropertyName }).ToArray();
                     command.Query.ClearQueryFields();
-                    foreach (var combineItem in command.Query.CombineItems)
+                    foreach (var combineEntry in command.Query.Combines)
                     {
-                        combineItem.CombineQuery.ClearQueryFields();
+                        combineEntry.Query.ClearQueryFields();
                         if (combineKeys.IsNullOrEmpty())
                         {
-                            combineItem.CombineQuery.ClearNotQueryFields();
+                            combineEntry.Query.ClearNotQueryFields();
                             command.Query.ClearNotQueryFields();
                         }
                         else
                         {
                             command.Query.AddQueryFields(combineKeys);
-                            if (combineItem.CombineType == CombineType.Union || combineItem.CombineType == CombineType.UnionAll)
+                            if (combineEntry.Type == CombineType.Union || combineEntry.Type == CombineType.UnionAll)
                             {
-                                combineItem.CombineQuery.AddQueryFields(combineKeys);
+                                combineEntry.Query.AddQueryFields(combineKeys);
                             }
                         }
                     }
                 }
             }
-            IQueryTranslator translator = MySqlFactory.GetQueryTranslator(server);
-            var tranResult = translator.Translate(command.Query);
+            IQueryTranslator translator = MySqlManager.GetQueryTranslator(DataAccessContext.Create(server, command));
+            var queryTranslationResult = translator.Translate(command.Query);
 
             #endregion
 
             #region script
 
             string cmdText;
-            string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
-            switch (command.Query.QueryType)
+            string joinScript = queryTranslationResult.AllowJoin ? queryTranslationResult.JoinScript : string.Empty;
+            switch (command.Query.ExecutionMode)
             {
-                case QueryCommandType.Text:
-                    cmdText = tranResult.ConditionString;
+                case QueryExecutionMode.Text:
+                    cmdText = queryTranslationResult.ConditionString;
                     break;
-                case QueryCommandType.QueryObject:
+                case QueryExecutionMode.QueryObject:
                 default:
-                    string objectName = DataManager.GetEntityObjectName(DatabaseServerType.MySQL, command.EntityType, command.ObjectName);
-                    cmdText = string.IsNullOrWhiteSpace(tranResult.CombineScript)
-                        ? $"{tranResult.PreScript}SELECT {funcName}({MySqlFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")}"
-                        : $"{tranResult.PreScript}SELECT {funcName}({MySqlFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM (SELECT {string.Join(",", MySqlFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {MySqlFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName}";
+                    string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+                    cmdText = string.IsNullOrWhiteSpace(queryTranslationResult.CombineScript)
+                        ? $"{queryTranslationResult.PreScript}SELECT {funcName}({MySqlManager.FormatField(translator.ObjectPetName, defaultField, false)}) FROM {MySqlManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(queryTranslationResult.ConditionString) ? string.Empty : $"WHERE {queryTranslationResult.ConditionString}")}"
+                        : $"{queryTranslationResult.PreScript}SELECT {funcName}({MySqlManager.FormatField(translator.ObjectPetName, defaultField, false)}) FROM (SELECT {string.Join(",", MySqlManager.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {MySqlManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(queryTranslationResult.ConditionString) ? string.Empty : $"WHERE {queryTranslationResult.ConditionString}")} {queryTranslationResult.CombineScript}) AS {translator.ObjectPetName}";
                     break;
             }
 
@@ -749,23 +761,23 @@ namespace EZNEW.Data.MySQL
 
             #region parameter
 
-            var parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(tranResult.Parameters));
+            var parameters = MySqlManager.ConvertCmdParameters(MySqlManager.ConvertParameter(queryTranslationResult.Parameters));
 
             #endregion
 
             //Trace log
-            MySqlFactory.LogScript(cmdText, tranResult.Parameters);
+            MySqlManager.LogScript(cmdText, queryTranslationResult.Parameters);
 
-            using (var conn = MySqlFactory.GetConnection(server))
+            using (var conn = MySqlManager.GetConnection(server))
             {
-                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = MySqlManager.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: MySqlManager.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.ExecuteScalarAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Query data
+        /// Query data set
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
@@ -773,12 +785,12 @@ namespace EZNEW.Data.MySQL
         public async Task<DataSet> QueryMultipleAsync(DatabaseServer server, ICommand command)
         {
             //Trace log
-            MySqlFactory.LogScript(command.CommandText, command.Parameters);
-            using (var conn = MySqlFactory.GetConnection(server))
+            MySqlManager.LogScript(command.Text, command.Parameters);
+            using (var conn = MySqlManager.GetConnection(server))
             {
-                var tran = MySqlFactory.GetQueryTransaction(conn, command.Query);
-                DynamicParameters parameters = MySqlFactory.ConvertCmdParameters(MySqlFactory.ParseParameters(command.Parameters));
-                var cmdDefinition = new CommandDefinition(command.CommandText, parameters, transaction: tran, commandType: MySqlFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = MySqlManager.GetQueryTransaction(conn, command.Query);
+                DynamicParameters parameters = MySqlManager.ConvertCmdParameters(MySqlManager.ConvertParameter(command.Parameters));
+                var cmdDefinition = new CommandDefinition(command.Text, parameters, transaction: tran, commandType: MySqlManager.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 using (var reader = await conn.ExecuteReaderAsync(cmdDefinition).ConfigureAwait(false))
                 {
                     DataSet dataSet = new DataSet();
@@ -802,8 +814,8 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="dataTable">Data table</param>
-        /// <param name="bulkInsertOptions">Insert options</param>
-        public void BulkInsert(DatabaseServer server, DataTable dataTable, IBulkInsertOptions bulkInsertOptions = null)
+        /// <param name="bulkInsertionOptions">Bulk insertion options</param>
+        public void BulkInsert(DatabaseServer server, DataTable dataTable, IBulkInsertionOptions bulkInsertionOptions = null)
         {
             BulkInsertAsync(server, dataTable).Wait();
         }
@@ -813,8 +825,8 @@ namespace EZNEW.Data.MySQL
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="dataTable">Data table</param>
-        /// <param name="bulkInsertOptions">Insert options</param>
-        public async Task BulkInsertAsync(DatabaseServer server, DataTable dataTable, IBulkInsertOptions bulkInsertOptions = null)
+        /// <param name="bulkInsertionOptions">Bulk insertion options</param>
+        public async Task BulkInsertAsync(DatabaseServer server, DataTable dataTable, IBulkInsertionOptions bulkInsertionOptions = null)
         {
             if (server == null)
             {
@@ -843,7 +855,7 @@ namespace EZNEW.Data.MySQL
                         FileName = dataFilePath,
                         NumberOfLinesToSkip = 0
                     };
-                    if (bulkInsertOptions is MySqlBulkInsertOptions mySqlBulkInsertOptions && mySqlBulkInsertOptions != null)
+                    if (bulkInsertionOptions is MySqlBulkInsertionOptions mySqlBulkInsertOptions && mySqlBulkInsertOptions != null)
                     {
                         loader.Priority = mySqlBulkInsertOptions.Priority;
                         loader.ConflictOption = mySqlBulkInsertOptions.ConflictOption;
