@@ -1,27 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
   <metadata>
-    <id>EZNEW.Data.MySQL</id>
+    <id>Sixnet.Database.MySQL</id>
     <version>$version$</version>
     <title></title>
     <authors>DingBin.Li</authors>
-    <owners>EZNEW</owners>
+    <owners>DingBin.Li</owners>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <licenseUrl>https://github.com/eznew-net/EZNEW.Data.MySQL/blob/master/LICENSE</licenseUrl>
-    <projectUrl>https://github.com/eznew-net/EZNEW.Data.MySQL</projectUrl>
-    <iconUrl>http://www.eznew.net/nugetico.png</iconUrl>
-    <description>Provides access to MySQL databases based on the EZNEW development framework</description>
+    <license type="expression">MIT</license>
+    <projectUrl>https://github.com/sixnet-net</projectUrl>
+    <icon>images\nugeticon.png</icon>
+    <description>Provides access to MySQL databases based on the Sixnet development framework</description>
     <copyright>Copyright © DingBin.Li</copyright>
-    <tags>.NET,EZNEW,MySQL</tags>
+    <tags>.NET,Sixnet,MySQL</tags>
     <dependencies>
-      <group targetFramework=".NETStandard2.0">
-        <dependency id="MySql.Data" version="8.0.20" />
-        <dependency id="EZNEW" version="3.5.0" />
+      <group targetFramework=".NETStandard2.1">
+        <dependency id="System.Data.SqlClient" version="4.8.2" />
+        <dependency id="Sixnet" version="2.0.0" />
       </group>
     </dependencies>
   </metadata>
   <files>
-    <file src="EZNEW.Data.MySQL\bin\$configuration$\netstandard2.0\EZNEW.Data.MySQL.dll" target="lib\netstandard2.0" />
-	<file src="EZNEW.Data.MySQL\bin\$configuration$\netstandard2.0\EZNEW.Data.MySQL.pdb" target="lib\netstandard2.0" />
+    <file src="Sixnet.Database.MySQL\bin\$configuration$\netstandard2.1\Sixnet.Database.MySQL.dll" target="lib\netstandard2.1" />
+	<file src="Sixnet.Database.MySQL\bin\$configuration$\netstandard2.1\Sixnet.Database.MySQL.pdb" target="lib\netstandard2.1" />
+	<file src=".\nugeticon.png" target="images\" />
   </files>
 </package>
