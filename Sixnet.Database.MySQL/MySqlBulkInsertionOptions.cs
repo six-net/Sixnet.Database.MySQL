@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using MySql.Data.MySqlClient;
+using Sixnet.Development.Data;
 using Sixnet.Development.Data.Database;
 
 namespace Sixnet.Database.MySQL
@@ -11,6 +12,11 @@ namespace Sixnet.Database.MySQL
     /// </summary>
     public class MySqlBulkInsertionOptions : ISixnetBulkInsertionOptions
     {
+        /// <summary>
+        /// Gets or sets the data operation options
+        /// </summary>
+        public SixnetDataOperationOptions DataOperationOptions { get; set; }
+
         /// <summary>
         /// Gets or sets the loader priority.
         /// </summary>
