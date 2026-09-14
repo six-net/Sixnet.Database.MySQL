@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+
 using MySql.Data.MySqlClient;
+
 using Sixnet.Development.Data;
 using Sixnet.Development.Data.Database;
 
@@ -10,7 +12,7 @@ namespace Sixnet.Database.MySQL
     /// <summary>
     /// Defines bulk insertion options for mysql
     /// </summary>
-    public class MySqlBulkInsertionOptions : ISixnetBulkInsertionOptions
+    public class SixnetMySqlBulkInsertionOptions : ISixnetBulkInsertionOptions
     {
         /// <summary>
         /// Gets or sets the data operation options

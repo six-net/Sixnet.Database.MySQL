@@ -8,14 +8,14 @@ namespace Sixnet.Database.MySQL
     /// <summary>
     /// Defines mysql manager
     /// </summary>
-    internal static class MySqlManager
+    internal static class SixnetMySqlManager
     {
         #region Fields
 
         /// <summary>
         /// Default query translator
         /// </summary>
-        static readonly MySqlDataCommandResolver DefaultResolver = new MySqlDataCommandResolver();
+        static readonly SixnetMySqlDataCommandResolver DefaultResolver = new SixnetMySqlDataCommandResolver();
 
         #endregion
 
@@ -39,7 +39,7 @@ namespace Sixnet.Database.MySQL
         /// Get command resolver
         /// </summary>
         /// <returns>Return a command resolver</returns>
-        internal static MySqlDataCommandResolver GetCommandResolver()
+        internal static SixnetMySqlDataCommandResolver GetCommandResolver()
         {
             return DefaultResolver;
         }

@@ -1,13 +1,14 @@
-﻿using System;
+﻿using System.Collections.Generic;
+using System;
 using Sixnet.Development.Data.Field.Formatting;
 using Sixnet.Exceptions;
 
 namespace Sixnet.Database.MySQL
 {
     /// <summary>
-    /// Defines default field formatter for mysql
+    /// Defines default field converter for mysql
     /// </summary>
-    internal class MySqlDefaultFieldFormatter : ISixnetFieldFormatter
+    internal class SixnetMySqlDefaultFieldFormatter : ISixnetFieldFormatter
     {
         public string Format(SixnetFormatFieldContext context)
         {
@@ -75,6 +76,8 @@ namespace Sixnet.Database.MySQL
                 SixnetFieldFormatterNames.MATH_TAN => $"TAN({formatedFieldName})",
                 SixnetFieldFormatterNames.STRING_INDEX_OF => StringIndexOf(formatedFieldName, formatOption.Parameter),
                 SixnetFieldFormatterNames.STRING_LAST_INDEX_OF => StringLastIndexOf(formatedFieldName, formatOption.Parameter),
+                SixnetFieldFormatterNames.EXISTS => $"EXISTS{formatedFieldName}",
+                SixnetFieldFormatterNames.NOT_EXISTS => $"NOT EXISTS{formatedFieldName}",
                 _ => throw new SixnetException($"{context.Server.DatabaseType} does not support field formatter: {formatOption.Name}"),
             };
 
